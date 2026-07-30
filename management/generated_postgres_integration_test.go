@@ -115,19 +115,28 @@ func TestGeneratedManagementCommandsUseRealPostgresAndReleaseConnections(t *test
 		"changepassword", username, "--password-stdin",
 	}, "second-secret\n")
 
-	var passwordHash string
+	var persisted struct {
+		PasswordHash string `bun:"password_hash"`
+		Email        string `bun:"email"`
+		IsStaff      bool   `bun:"is_staff"`
+		IsSuperuser  bool   `bun:"is_superuser"`
+	}
 	err = admin.Bun().NewRaw(
-		"SELECT password_hash FROM "+quotedSchema+".auth_users WHERE username = ?",
+		"SELECT password_hash, email, is_staff, is_superuser FROM "+
+			quotedSchema+".auth_users WHERE username = ?",
 		username,
-	).Scan(ctx, &passwordHash)
+	).Scan(ctx, &persisted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := auth.NewPasswordHasher().Check(pointerTo("second-secret"), passwordHash)
+	if persisted.Email != "ROOT@example.com" || !persisted.IsStaff || !persisted.IsSuperuser {
+		t.Fatalf("persisted superuser = %+v", persisted)
+	}
+	result, err := auth.NewPasswordHasher().Check(pointerTo("second-secret"), persisted.PasswordHash)
 	if err != nil || !result.OK {
 		t.Fatalf("new password check = %+v, %v", result, err)
 	}
-	oldResult, err := auth.NewPasswordHasher().Check(pointerTo("first-secret"), passwordHash)
+	oldResult, err := auth.NewPasswordHasher().Check(pointerTo("first-secret"), persisted.PasswordHash)
 	if err != nil || oldResult.OK {
 		t.Fatalf("old password check = %+v, %v", oldResult, err)
 	}

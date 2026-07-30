@@ -330,5 +330,9 @@ func runtimeFailure(err error) error {
 	if err == nil {
 		return nil
 	}
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) {
+		return err
+	}
 	return &ExitError{Code: ExitFailure, Err: err}
 }

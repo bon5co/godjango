@@ -260,6 +260,46 @@ func Commands() []management.Command {
 	}
 }
 
+func TestGeneratedRuntimeFailsBeforeStartWhenRequiredEnvironmentIsMissing(t *testing.T) {
+	original, existed := os.LookupEnv("DATABASE_URL")
+	if err := os.Unsetenv("DATABASE_URL"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv("DATABASE_URL", original)
+		} else {
+			_ = os.Unsetenv("DATABASE_URL")
+		}
+	})
+
+	frameworkRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := (Scaffolder{
+		FrameworkVersion: "v0.0.0",
+		FrameworkReplace: frameworkRoot,
+	}).StartProject(context.Background(), t.TempDir(), "bookshelf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	code := ExecuteGlobal(
+		context.Background(),
+		[]string{"runserver"},
+		GlobalOptions{WorkingDirectory: root},
+		Streams{Out: &output, Err: &output},
+	)
+	if code != ExitFailure {
+		t.Fatalf("exit = %d, want %d; output=%q", code, ExitFailure, output.String())
+	}
+	if !strings.Contains(output.String(), "DATABASE_URL is required") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
 func runGo(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	command := exec.Command("go", args...)
