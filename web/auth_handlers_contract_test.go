@@ -98,6 +98,37 @@ func TestLoginRejectsUnsafeRedirectAndRotatesSession(t *testing.T) {
 	}
 }
 
+func TestSuccessfulHTMXLoginUsesBrowserRedirectHeader(t *testing.T) {
+	fixture := newAuthHTTPFixture(t)
+	token := fixture.csrfToken(t, "/accounts/login/")
+	values := url.Values{
+		"username":   {"alice"},
+		"password":   {"correct"},
+		"csrf_token": {token},
+	}
+	request, err := http.NewRequest(
+		http.MethodPost,
+		fixture.server.URL+"/accounts/login/",
+		strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("HX-Request", "true")
+	response, err := fixture.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", response.StatusCode)
+	}
+	if got := response.Header.Get("HX-Redirect"); got != "/" {
+		t.Fatalf("HX-Redirect = %q, want /", got)
+	}
+}
+
 func TestLoginFailureIsGenericAndSafelyRedisplaysUsername(t *testing.T) {
 	fixture := newAuthHTTPFixture(t)
 	token := fixture.csrfToken(t, "/accounts/login/")
@@ -188,6 +219,25 @@ func TestLogoutRequiresPostAndCSRFThenInvalidatesSession(t *testing.T) {
 	protected.Body.Close()
 	if protected.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("protected after logout = %d, want 401", protected.StatusCode)
+	}
+}
+
+func TestInactiveUserIsRemovedFromAuthenticatedSession(t *testing.T) {
+	fixture := newAuthHTTPFixture(t)
+	fixture.login(t)
+	fixture.backend.users["alice"].IsActive = false
+
+	response := fixture.get(t, "/protected")
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("inactive protected status = %d, want 401", response.StatusCode)
+	}
+
+	fixture.backend.users["alice"].IsActive = true
+	response = fixture.get(t, "/protected")
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("flushed session status = %d, want 401", response.StatusCode)
 	}
 }
 

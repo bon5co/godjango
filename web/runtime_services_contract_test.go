@@ -28,7 +28,7 @@ func (app *runtimeServicesApp) RoutesWithServices(
 
 func TestRouterInjectsExplicitRuntimeServicesIntoApps(t *testing.T) {
 	app := new(runtimeServicesApp)
-	configured, err := project.New(validSettings{}, app)
+	configured, err := project.New(routeSettings{}, app)
 	if err != nil {
 		t.Fatal(err)
 	}

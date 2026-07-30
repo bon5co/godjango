@@ -57,9 +57,10 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"Services: web.RuntimeServices{",
-		"Database: db",
-		"Users: manager",
-		"AuthStore: store",
+		"Database:",
+		"Users:",
+		"AuthStore:",
+		"Login:",
 	} {
 		if !strings.Contains(string(server), fragment) {
 			t.Errorf("generated server missing runtime dependency %q", fragment)

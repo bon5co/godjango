@@ -16,8 +16,8 @@ Environment:
 - direct SQL assertions use a separate administrative connection
 
 Every browser transition waits for a semantic DOM condition before capturing
-its numbered screenshot. Browser contexts represent separate devices where
-stale-session behavior matters.
+its numbered screenshot. Independent temporary browser profiles represent
+separate devices where stale-session behavior matters.
 
 Flows:
 
@@ -49,6 +49,10 @@ Coverage matrix:
 
 The suite first runs the generated project's build, vet, unit, and PostgreSQL
 integration targets. Browser automation runs only after those gates pass.
+Browser control uses pinned
+[chromedp v0.16.0](https://github.com/chromedp/chromedp/releases/tag/v0.16.0)
+against the locally installed Chromium; headless mode is explicitly disabled.
+The environment must expose a usable `WAYLAND_DISPLAY` or `DISPLAY`.
 
 Run locally:
 

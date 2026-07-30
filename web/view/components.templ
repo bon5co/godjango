@@ -40,6 +40,10 @@ templ Paragraph(message string) {
 	<p>{ message }</p>
 }
 
+templ Link(href string, label string) {
+	<a href={ templ.SafeURL(href) }>{ label }</a>
+}
+
 templ Form(data FormData) {
 	<form
 		class="gd-form"

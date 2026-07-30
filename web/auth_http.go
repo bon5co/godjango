@@ -111,6 +111,11 @@ func Authentication(backend AuthBackend, sessionSecret []byte) func(http.Handler
 				WriteError(response, request, http.StatusInternalServerError, "auth_unavailable")
 				return
 			}
+			if !user.IsActive {
+				_ = session.Flush()
+				next.ServeHTTP(response, request)
+				return
+			}
 			if _, valid := auth.SessionUserID(session, user, sessionSecret); !valid {
 				next.ServeHTTP(response, request)
 				return
@@ -200,7 +205,7 @@ func (handlers *AuthHandlers) login(response http.ResponseWriter, request *http.
 	) {
 		target = "/"
 	}
-	http.Redirect(response, request, target, http.StatusSeeOther)
+	redirect(response, request, target)
 }
 
 func (handlers *AuthHandlers) logout(response http.ResponseWriter, request *http.Request) {
@@ -208,7 +213,7 @@ func (handlers *AuthHandlers) logout(response http.ResponseWriter, request *http
 		WriteError(response, request, http.StatusInternalServerError, "session_unavailable")
 		return
 	}
-	http.Redirect(response, request, "/", http.StatusSeeOther)
+	redirect(response, request, "/")
 }
 
 func (handlers *AuthHandlers) passwordChangeForm(
@@ -269,7 +274,7 @@ func (handlers *AuthHandlers) passwordChange(response http.ResponseWriter, reque
 		WriteError(response, request, http.StatusInternalServerError, "session_unavailable")
 		return
 	}
-	http.Redirect(response, request, "/accounts/password-change/done/", http.StatusSeeOther)
+	redirect(response, request, "/accounts/password-change/done/")
 }
 
 func (handlers *AuthHandlers) passwordResetForm(
@@ -326,12 +331,7 @@ func (handlers *AuthHandlers) passwordReset(response http.ResponseWriter, reques
 			)
 		}
 	}
-	http.Redirect(
-		response,
-		request,
-		"/accounts/password-reset/done/",
-		http.StatusSeeOther,
-	)
+	redirect(response, request, "/accounts/password-reset/done/")
 }
 
 func (handlers *AuthHandlers) passwordResetDone(
@@ -384,12 +384,7 @@ func (handlers *AuthHandlers) passwordResetConfirm(
 		WriteError(response, request, http.StatusInternalServerError, "auth_unavailable")
 		return
 	}
-	http.Redirect(
-		response,
-		request,
-		"/accounts/password-reset/complete/",
-		http.StatusSeeOther,
-	)
+	redirect(response, request, "/accounts/password-reset/complete/")
 }
 
 func (handlers *AuthHandlers) passwordResetComplete(
@@ -561,4 +556,13 @@ func (handlers *AuthHandlers) renderForm(
 
 func setCSRFHeader(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("X-CSRF-Token", CSRFToken(request))
+}
+
+func redirect(response http.ResponseWriter, request *http.Request, target string) {
+	if view.IsHTMX(request) {
+		response.Header().Set("HX-Redirect", target)
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(response, request, target, http.StatusSeeOther)
 }

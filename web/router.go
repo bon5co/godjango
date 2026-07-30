@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/database"
 	"github.com/bon5co/godjango/project"
 	"github.com/bon5co/godjango/web/view"
 	"github.com/go-chi/chi/v5"
@@ -14,9 +15,23 @@ type RouteProvider interface {
 	Routes(chi.Router)
 }
 
+// RuntimeServices are long-lived dependencies owned by the production server.
+// Apps receive them explicitly at route registration and must not close them.
+type RuntimeServices struct {
+	Database  *database.DB
+	Users     *auth.Manager
+	AuthStore *auth.BunStore
+	Login     func(*http.Request, *auth.User) error
+}
+
+type RuntimeRouteProvider interface {
+	RoutesWithServices(chi.Router, RuntimeServices)
+}
+
 type RouterConfig struct {
 	Project    *project.Project
 	Middleware []Middleware
+	Services   RuntimeServices
 }
 
 func NewRouter(config RouterConfig) (chi.Router, error) {
@@ -32,6 +47,10 @@ func NewRouter(config RouterConfig) (chi.Router, error) {
 	}
 	router.Handle("/static/godjango/*", view.Assets())
 	for _, app := range config.Project.Apps() {
+		if routes, ok := app.(RuntimeRouteProvider); ok {
+			routes.RoutesWithServices(router, config.Services)
+			continue
+		}
 		if routes, ok := app.(RouteProvider); ok {
 			routes.Routes(router)
 		}
