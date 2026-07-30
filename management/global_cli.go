@@ -95,23 +95,23 @@ func executeManager(ctx context.Context, root string, args []string, streams Str
 	defer os.Remove(managerPath)
 
 	managerPackage := "." + string(filepath.Separator) + filepath.Join("cmd", "manage")
-	build := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", managerPath, managerPackage)
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", managerPath, managerPackage)
 	build.Dir = root
 	build.Env = os.Environ()
 	build.Stdin = streams.In
 	build.Stdout = streams.Out
 	build.Stderr = streams.Err
-	if err := build.Run(); err != nil {
+	if err := runAttached(ctx, build); err != nil {
 		return commandStatus(ctx, err, streams.Err)
 	}
 
-	command := exec.CommandContext(ctx, managerPath, args...)
+	command := exec.Command(managerPath, args...)
 	command.Dir = root
 	command.Env = os.Environ()
 	command.Stdin = streams.In
 	command.Stdout = streams.Out
 	command.Stderr = streams.Err
-	if err := command.Run(); err != nil {
+	if err := runAttached(ctx, command); err != nil {
 		return commandStatus(ctx, err, streams.Err)
 	}
 	return ExitOK
@@ -121,9 +121,12 @@ func commandStatus(ctx context.Context, err error, stderr io.Writer) int {
 	if ctx.Err() != nil {
 		return ExitCanceled
 	}
+	if code, forwarded := forwardedExitCode(err); forwarded {
+		return code
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		code := exitErr.ExitCode()
+		code := processExitCode(exitErr)
 		if code >= 0 {
 			return code
 		}

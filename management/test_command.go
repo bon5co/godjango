@@ -94,23 +94,26 @@ func RunUnitTests(ctx context.Context, workingDirectory string, args []string, s
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, "go", UnitTestArguments(args)...)
+	command := exec.Command("go", UnitTestArguments(args)...)
 	command.Dir = root
 	command.Env = os.Environ()
 	command.Stdin = streams.In
 	command.Stdout = defaultWriter(streams.Out, os.Stdout)
 	command.Stderr = defaultWriter(streams.Err, os.Stderr)
 
-	err = command.Run()
+	err = runAttached(ctx, command)
 	if err == nil {
 		return nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
+	if code, forwarded := forwardedExitCode(err); forwarded {
+		return &ExitError{Code: code, Err: err}
+	}
 	var processErr *exec.ExitError
 	if errors.As(err, &processErr) {
-		return &ExitError{Code: processErr.ExitCode(), Err: err}
+		return &ExitError{Code: processExitCode(processErr), Err: err}
 	}
 	if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
 		return fmt.Errorf("godjango test: Go toolchain is unavailable: %w", err)

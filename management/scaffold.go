@@ -84,8 +84,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/bon5co/godjango/management"
 	configuredproject "%s/internal/project"
@@ -97,10 +95,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(management.ExitFailure)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	os.Exit(management.ExecuteProject(
-		ctx,
+		context.Background(),
 		os.Args[1:],
 		management.ProjectOptions{Project: configured},
 		management.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
