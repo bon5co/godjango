@@ -1,0 +1,123 @@
+package view
+
+templ Layout(title string, csrfToken string, content templ.Component) {
+	<!doctype html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="csrf-token" content={ csrfToken }/>
+			<title>{ title }</title>
+			<link rel="stylesheet" href="/static/godjango/godjango.css"/>
+			<script defer src="/static/godjango/htmx-2.0.9.min.js"></script>
+			<script defer src="/static/godjango/alpine-3.15.12.min.js"></script>
+			<script defer src="/static/godjango/godjango.js"></script>
+		</head>
+		<body>
+			<main id="main" tabindex="-1">
+				@content
+			</main>
+		</body>
+	</html>
+}
+
+templ Stack(components ...templ.Component) {
+	<div class="gd-stack">
+		for _, component := range components {
+			@component
+		}
+	</div>
+}
+
+templ Page(title string, components ...templ.Component) {
+	<section class="gd-page">
+		<h1>{ title }</h1>
+		@Stack(components...)
+	</section>
+}
+
+templ Paragraph(message string) {
+	<p>{ message }</p>
+}
+
+templ Form(data FormData) {
+	<form
+		class="gd-form"
+		action={ data.Action }
+		method={ data.method() }
+		hx-post={ data.Action }
+		hx-target="this"
+		hx-swap="outerHTML focus-scroll:true"
+	>
+		<input type="hidden" name="csrf_token" value={ data.CSRFToken }/>
+		if len(data.ErrorSummary) > 0 {
+			<div class="gd-errors" role="alert" tabindex="-1" autofocus?={ !hasFieldErrors(data.Fields) }>
+				<p>Please correct the errors below.</p>
+				<ul>
+					for _, message := range data.ErrorSummary {
+						<li>{ message }</li>
+					}
+				</ul>
+			</div>
+		}
+		for index, field := range data.Fields {
+			if field.inputType() == "hidden" {
+				<input
+					name={ field.Name }
+					type="hidden"
+					value={ field.Value }
+				/>
+			} else {
+				<div class="gd-field">
+					<label for={ field.Name }>{ field.Label }</label>
+					<input
+						id={ field.Name }
+						name={ field.Name }
+						type={ field.inputType() }
+						value={ field.Value }
+						autocomplete={ field.Autocomplete }
+						if len(field.Errors) > 0 {
+							aria-invalid="true"
+							aria-describedby={ field.Name + "-error" }
+						}
+						autofocus?={ len(field.Errors) > 0 && firstInvalidField(data.Fields) == index }
+					/>
+					if len(field.Errors) > 0 {
+						<ul class="gd-field-errors" id={ field.Name + "-error" }>
+							for _, message := range field.Errors {
+								<li>{ message }</li>
+							}
+						</ul>
+					}
+				</div>
+			}
+		}
+		<button type="submit">{ data.SubmitLabel }</button>
+	</form>
+}
+
+templ FlashMessages(messages []Flash) {
+	<div class="gd-flashes" aria-live="polite">
+		for _, message := range messages {
+			if message.Level == FlashError {
+				<p class="gd-flash gd-flash-error" role="alert">{ message.Message }</p>
+			} else {
+				<p class="gd-flash gd-flash-success" role="status">{ message.Message }</p>
+			}
+		}
+	</div>
+}
+
+templ Pagination(data PaginationData) {
+	if data.Total > 1 && data.URL != nil {
+		<nav class="gd-pagination" aria-label="Pagination" hx-boost="true">
+			for _, page := range pages(data.Total) {
+				if page == data.Current {
+					<a href={ templ.SafeURL(data.URL(page)) } aria-current="page">{ page }</a>
+				} else {
+					<a href={ templ.SafeURL(data.URL(page)) }>{ page }</a>
+				}
+			}
+		</nav>
+	}
+}

@@ -69,3 +69,24 @@ func TestEmbeddedAssetsSupportConditionalGETAndRejectUnknownPaths(t *testing.T) 
 		}
 	}
 }
+
+func TestBrowserBridgePropagatesCSRFAndRestoresFocus(t *testing.T) {
+	response := httptest.NewRecorder()
+	Assets().ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/static/godjango/godjango.js", nil),
+	)
+	body := response.Body.String()
+	for _, fragment := range []string{
+		`meta[name="csrf-token"]`,
+		`event.detail.headers["X-CSRF-Token"]`,
+		`event.detail.xhr.status === 422`,
+		`event.detail.shouldSwap = true`,
+		`htmx:afterSwap`,
+		`querySelector?.("[autofocus]")`,
+	} {
+		if !strings.Contains(body, fragment) {
+			t.Errorf("bridge missing %q", fragment)
+		}
+	}
+}

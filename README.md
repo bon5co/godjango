@@ -47,3 +47,7 @@ unit suite by default. See [management CLI](docs/management-cli.md).
 The `net/http` runtime now provides explicit Chi routes, secure middleware,
 PostgreSQL-backed rotating SCS sessions, masked CSRF, forms, authorization, and
 complete login/logout/password flows. See [HTTP runtime](docs/http-runtime.md).
+
+The view layer renders shared templ components as full pages or HTMX fragments,
+uses Alpine's CSP build only for transient browser state, and embeds pinned
+assets in the binary. See [views](docs/views.md).
