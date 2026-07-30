@@ -67,6 +67,7 @@ func (handlers *AuthHandlers) Routes(router chi.Router) {
 		"/accounts/password-change/",
 		handlers.passwordChange,
 	)
+	router.Get("/accounts/password-change/done/", handlers.passwordChangeDone)
 	router.Get("/accounts/password-reset/", handlers.passwordResetForm)
 	router.Post("/accounts/password-reset/", handlers.passwordReset)
 	router.Get("/accounts/password-reset/done/", handlers.passwordResetDone)
@@ -86,6 +87,10 @@ type currentUserContextKey struct{}
 func Authentication(backend AuthBackend, sessionSecret []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if backend == nil || len(sessionSecret) == 0 {
+				WriteError(response, request, http.StatusInternalServerError, "auth_unavailable")
+				return
+			}
 			session := SessionFromRequest(request)
 			if session == nil {
 				WriteError(response, request, http.StatusInternalServerError, "session_unavailable")
@@ -114,6 +119,13 @@ func Authentication(backend AuthBackend, sessionSecret []byte) func(http.Handler
 			next.ServeHTTP(response, request.WithContext(ctx))
 		})
 	}
+}
+
+func (handlers *AuthHandlers) passwordChangeDone(
+	response http.ResponseWriter,
+	_ *http.Request,
+) {
+	_, _ = fmt.Fprint(response, "Password changed.")
 }
 
 func CurrentUser(request *http.Request) (*auth.User, bool) {
@@ -290,7 +302,19 @@ func (handlers *AuthHandlers) passwordReset(response http.ResponseWriter, reques
 		WriteError(response, request, http.StatusBadRequest, "invalid_form")
 		return
 	}
-	email := auth.NormalizeEmail(strings.TrimSpace(request.PostForm.Get("email")))
+	form := NewForm(request.PostForm)
+	form.Required("email")
+	form.Email("email")
+	if !form.Valid() {
+		response.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = fmt.Fprintf(
+			response,
+			`<!doctype html><input name="email" value="%s"><p>Enter a valid email address.</p>`,
+			html.EscapeString(form.Value("email")),
+		)
+		return
+	}
+	email := auth.NormalizeEmail(strings.TrimSpace(form.Value("email")))
 	users, err := handlers.config.Backend.UsersByEmail(request.Context(), email)
 	if err != nil {
 		WriteError(response, request, http.StatusInternalServerError, "auth_unavailable")

@@ -146,6 +146,7 @@ func TestTrustedProxyOnlyHonorsForwardingFromDeclaredNetworks(t *testing.T) {
 		want   string
 	}{
 		{remote: "10.1.2.3:1234", header: "203.0.113.9, 10.1.2.3", want: "203.0.113.9"},
+		{remote: "10.1.2.3:1234", header: "198.51.100.8, 203.0.113.9", want: "203.0.113.9"},
 		{remote: "192.0.2.4:1234", header: "203.0.113.9", want: "192.0.2.4"},
 		{remote: "10.1.2.3:1234", header: "not-an-ip", want: "10.1.2.3"},
 	} {

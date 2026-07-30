@@ -177,10 +177,13 @@ func TrustedProxy(trusted []netip.Prefix) Middleware {
 			remote := addressFromRemoteAddr(request.RemoteAddr)
 			client := remote
 			if prefixContains(prefixes, remote) {
-				forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
-				if len(forwarded) > 0 {
-					if parsed, err := netip.ParseAddr(strings.TrimSpace(forwarded[0])); err == nil {
-						client = parsed.Unmap()
+				forwarded, valid := forwardedAddresses(request.Header.Get("X-Forwarded-For"))
+				if valid {
+					for index := len(forwarded) - 1; index >= 0; index-- {
+						if !prefixContains(prefixes, forwarded[index]) {
+							client = forwarded[index]
+							break
+						}
 					}
 				}
 			}
@@ -188,6 +191,22 @@ func TrustedProxy(trusted []netip.Prefix) Middleware {
 			next.ServeHTTP(response, request.WithContext(ctx))
 		})
 	}
+}
+
+func forwardedAddresses(header string) ([]netip.Addr, bool) {
+	if strings.TrimSpace(header) == "" {
+		return nil, false
+	}
+	parts := strings.Split(header, ",")
+	addresses := make([]netip.Addr, 0, len(parts))
+	for _, part := range parts {
+		address, err := netip.ParseAddr(strings.TrimSpace(part))
+		if err != nil {
+			return nil, false
+		}
+		addresses = append(addresses, address.Unmap())
+	}
+	return addresses, true
 }
 
 func RemoteIP(request *http.Request) netip.Addr {

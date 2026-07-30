@@ -21,9 +21,8 @@ first in-memory auth domain slice now passes its ported contracts:
 go test ./...
 ```
 
-See [the auth test-port plan](docs/django-auth-test-port.md). Bun-backed
-persistence, HTTP forms, middleware, and browser flows remain separate
-test-first delivery slices.
+See [the auth test-port plan](docs/django-auth-test-port.md). Browser-level
+presentation remains a separate test-first delivery slice.
 
 Application configuration uses explicit, typed environment declarations. See
 [environment declarations](docs/environment.md).
@@ -44,3 +43,7 @@ without exposing Bun through auth domain APIs. See
 The Django-familiar management CLI uses a global discovery/scaffolding layer
 and a compiled project-local manager. `godjango test` runs only the ordinary Go
 unit suite by default. See [management CLI](docs/management-cli.md).
+
+The `net/http` runtime now provides explicit Chi routes, secure middleware,
+PostgreSQL-backed rotating SCS sessions, masked CSRF, forms, authorization, and
+complete login/logout/password flows. See [HTTP runtime](docs/http-runtime.md).
