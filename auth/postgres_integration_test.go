@@ -259,3 +259,111 @@ func TestPermissionTransactionRollsBackEveryWrite(t *testing.T) {
 		t.Fatal("rolled-back permission remained visible")
 	}
 }
+
+func TestConcurrentPermissionGrantIsIdempotent(t *testing.T) {
+	db := authDatabase(t)
+	store := auth.NewBunStore(db)
+	manager := auth.NewManager(store, auth.NewPasswordHasher())
+	ctx := context.Background()
+	username := uniqueAuthValue(t, "concurrent_permission")
+	user, err := manager.CreateUser(ctx, auth.CreateUserOptions{Username: username})
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission := auth.Permission("books.publish_book")
+	if err := store.CreatePermission(ctx, permission); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results <- store.GrantUserPermission(ctx, user.ID, permission)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Errorf("GrantUserPermission() error = %v", err)
+		}
+	}
+
+	var count int
+	if err := db.Bun().NewRaw(
+		`SELECT count(*) FROM auth_user_permissions AS up
+		 JOIN auth_permissions AS p ON p.id = up.permission_id
+		 WHERE up.user_id = ? AND p.identity = ?`,
+		user.ID,
+		permission,
+	).Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("persisted permission rows = %d, want 1", count)
+	}
+}
+
+func TestSessionPersistenceRoundTripUpdateDeleteAndExpiry(t *testing.T) {
+	db := authDatabase(t)
+	store := auth.NewBunStore(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	key := uniqueAuthValue(t, "session")
+
+	session := auth.StoredSession{
+		Key:       key,
+		Data:      []byte("first"),
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.SaveSession(ctx, session); err != nil {
+		t.Fatalf("SaveSession() error = %v", err)
+	}
+	loaded, err := store.StoredSession(ctx, key)
+	if err != nil {
+		t.Fatalf("StoredSession() error = %v", err)
+	}
+	if string(loaded.Data) != "first" || !loaded.ExpiresAt.Equal(session.ExpiresAt) {
+		t.Fatalf("StoredSession() = %+v", loaded)
+	}
+
+	session.Data = []byte("updated")
+	if err := store.SaveSession(ctx, session); err != nil {
+		t.Fatalf("updating SaveSession() error = %v", err)
+	}
+	loaded, err = store.StoredSession(ctx, key)
+	if err != nil || string(loaded.Data) != "updated" {
+		t.Fatalf("updated StoredSession() = %+v, %v", loaded, err)
+	}
+	if err := store.DeleteSession(ctx, key); err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
+	}
+	if _, err := store.StoredSession(ctx, key); !errors.Is(err, auth.ErrSessionNotFound) {
+		t.Fatalf("StoredSession(deleted) error = %v", err)
+	}
+
+	expiredKey := uniqueAuthValue(t, "expired")
+	if err := store.SaveSession(ctx, auth.StoredSession{
+		Key:       expiredKey,
+		Data:      []byte("expired"),
+		ExpiresAt: now.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := store.DeleteExpiredSessions(ctx, now)
+	if err != nil {
+		t.Fatalf("DeleteExpiredSessions() error = %v", err)
+	}
+	if deleted < 1 {
+		t.Fatalf("DeleteExpiredSessions() = %d, want at least 1", deleted)
+	}
+	if _, err := store.StoredSession(ctx, expiredKey); !errors.Is(err, auth.ErrSessionNotFound) {
+		t.Fatalf("expired session error = %v", err)
+	}
+}
