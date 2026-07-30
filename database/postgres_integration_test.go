@@ -121,7 +121,9 @@ func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
 		t.Fatalf("pg_terminate_backend(%d) = false", originalPID)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// database/sql enforces a minimum connection-cleaner cadence. Wait beyond
+	// that cadence so the 50ms idle policy has been applied before reuse.
+	time.Sleep(1500 * time.Millisecond)
 	var replacementPID int
 	if err := db.Bun().NewRaw("SELECT pg_backend_pid()").Scan(ctx, &replacementPID); err != nil {
 		t.Fatalf("query after idle recycling error = %v", err)

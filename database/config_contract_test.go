@@ -107,6 +107,22 @@ func TestStartupPingUsesBoundedContext(t *testing.T) {
 	}
 }
 
+func TestConnectionErrorsDoNotLeakDSNPassword(t *testing.T) {
+	const secret = "never-print-this-password"
+	config := database.DefaultConfig(
+		"postgres://user:" + secret + "@127.0.0.1:1/missing?sslmode=disable",
+	)
+	config.PingTimeout = 50 * time.Millisecond
+
+	_, err := database.Open(context.Background(), config)
+	if !errors.Is(err, database.ErrConnect) {
+		t.Fatalf("Open() error = %v, want ErrConnect", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("Open() leaked DSN password in %q", err)
+	}
+}
+
 func TestOpenHonorsAlreadyCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
