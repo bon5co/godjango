@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/bon5co/godjango/migrations"
 	gdproject "github.com/bon5co/godjango/project"
 	"github.com/spf13/cobra"
 )
@@ -17,10 +18,12 @@ type Command struct {
 }
 
 type ProjectOptions struct {
-	Project          *gdproject.Project
-	WorkingDirectory string
-	Scaffolder       Scaffolder
-	Commands         []Command
+	Project             *gdproject.Project
+	WorkingDirectory    string
+	Scaffolder          Scaffolder
+	MigrationScaffolder migrations.Scaffolder
+	Services            ProjectServices
+	Commands            []Command
 }
 
 // ExecuteProject runs the command registry compiled into cmd/manage.
@@ -63,10 +66,10 @@ func ExecuteProject(ctx context.Context, args []string, options ProjectOptions, 
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if options.Project == nil {
-				return errors.New("godjango check: project configuration is unavailable")
+				return runtimeFailure(errors.New("godjango check: project configuration is unavailable"))
 			}
 			if err := options.Project.Check(ctx); err != nil {
-				return err
+				return runtimeFailure(err)
 			}
 			_, _ = fmt.Fprintln(streams.Out, "System check identified no issues.")
 			return nil
@@ -92,11 +95,20 @@ func ExecuteProject(ctx context.Context, args []string, options ProjectOptions, 
 	}
 	root.AddCommand(startAppCommand)
 
+	addProjectServiceCommands(root, ctx, workingDirectory, options, streams)
+
 	reserved := map[string]struct{}{
-		"check":    {},
-		"help":     {},
-		"startapp": {},
-		"test":     {},
+		"changepassword":  {},
+		"check":           {},
+		"createsuperuser": {},
+		"dbshell":         {},
+		"help":            {},
+		"makemigration":   {},
+		"migrate":         {},
+		"migrationstatus": {},
+		"runserver":       {},
+		"startapp":        {},
+		"test":            {},
 	}
 	for _, registered := range options.Commands {
 		if registered.Name == "" || registered.Run == nil {
