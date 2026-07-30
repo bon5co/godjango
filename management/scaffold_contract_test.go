@@ -51,6 +51,20 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 			t.Fatalf("go.mod %q does not contain %q", module, fragment)
 		}
 	}
+	server, err := os.ReadFile(filepath.Join(root, "cmd", "server", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"Services: web.RuntimeServices{",
+		"Database: db",
+		"Users: manager",
+		"AuthStore: store",
+	} {
+		if !strings.Contains(string(server), fragment) {
+			t.Errorf("generated server missing runtime dependency %q", fragment)
+		}
+	}
 
 	runGo(t, root, "test", "./...")
 	runGo(t, root, "vet", "./...")
