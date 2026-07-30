@@ -19,6 +19,7 @@ func TestWorkflowPinsToolsAndExposesEveryRequiredGate(t *testing.T) {
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 		"browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd",
 		"chrome-version: 151.0.7922.71",
+		`GODJANGO_CHROME_NO_SANDBOX: "true"`,
 		"postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e",
 		"scripts/ci.sh format",
 		"scripts/ci.sh dependencies",

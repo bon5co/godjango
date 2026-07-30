@@ -168,6 +168,8 @@ jobs:
       - name: Headed browser E2E
         env:
           GODJANGO_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          # GitHub's disposable Ubuntu runner blocks Chrome's user-namespace sandbox.
+          GODJANGO_CHROME_NO_SANDBOX: "true"
         run: >-
           xvfb-run -a -s "-screen 0 1440x1000x24"
           scripts/ci.sh e2e 2>&1 | tee test-results/logs/e2e.log

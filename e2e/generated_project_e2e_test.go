@@ -538,6 +538,9 @@ func startBrowser(t *testing.T) (context.Context, func()) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		options = append(options, chromedp.Flag("ozone-platform", "wayland"))
 	}
+	if os.Getenv("GODJANGO_CHROME_NO_SANDBOX") == "true" {
+		options = append(options, chromedp.Flag("no-sandbox", true))
+	}
 	allocator, stopAllocator := chromedp.NewExecAllocator(context.Background(), options...)
 	browser, stopBrowser := chromedp.NewContext(allocator)
 	if err := chromedp.Run(browser); err != nil {

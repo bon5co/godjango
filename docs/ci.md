@@ -18,6 +18,9 @@ GODJANGO_TEST_DATABASE_URL=postgres://... DISPLAY=:99 scripts/ci.sh e2e
 The PostgreSQL and browser gates fail immediately with actionable messages when
 their required database or headed display is missing. CI uses PostgreSQL
 18.4-alpine3.23 by immutable digest and Chrome for Testing 151.0.7922.71.
+Chrome's sandbox remains enabled locally. The disposable GitHub-hosted Ubuntu
+runner alone passes `--no-sandbox` because its AppArmor policy blocks Chrome's
+user-namespace sandbox; the suite loads only its loopback generated app.
 
 All actions are pinned to full commit SHAs. Go module and build caches key from
 `go.sum`. Failure artifacts retain gate logs for 14 days; browser failures also
