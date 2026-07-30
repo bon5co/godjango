@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/bon5co/godjango/auth"
 	"github.com/bon5co/godjango/migrations"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type MigrationManager interface {
@@ -182,15 +184,43 @@ func createSuperuserCommand(ctx context.Context, services ProjectServices, strea
 	var username string
 	var email string
 	var passwordStdin bool
+	var noInput bool
 	command := &cobra.Command{
 		Use:   "createsuperuser",
 		Short: "Create an administrative user",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if username == "" {
-				return errors.New("godjango createsuperuser: --username is required")
+				username = os.Getenv("GODJANGO_SUPERUSER_USERNAME")
 			}
-			password, err := commandPassword(streams, passwordStdin, "GODJANGO_SUPERUSER_PASSWORD")
+			if username == "" && !noInput {
+				var err error
+				username, err = promptLine(streams, "Username: ")
+				if err != nil {
+					return err
+				}
+			}
+			if username == "" {
+				return errors.New(
+					"godjango createsuperuser: provide --username or GODJANGO_SUPERUSER_USERNAME",
+				)
+			}
+			if email == "" {
+				email = os.Getenv("GODJANGO_SUPERUSER_EMAIL")
+			}
+			if email == "" && !noInput {
+				var err error
+				email, err = promptLine(streams, "Email address: ")
+				if err != nil {
+					return err
+				}
+			}
+			password, err := commandPassword(
+				streams,
+				passwordStdin,
+				"GODJANGO_SUPERUSER_PASSWORD",
+				noInput,
+			)
 			if err != nil {
 				return err
 			}
@@ -217,6 +247,7 @@ func createSuperuserCommand(ctx context.Context, services ProjectServices, strea
 	command.Flags().StringVar(&username, "username", "", "superuser username")
 	command.Flags().StringVar(&email, "email", "", "superuser email")
 	command.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read one password line from stdin")
+	command.Flags().BoolVar(&noInput, "noinput", false, "disable interactive prompts")
 	return command
 }
 
@@ -227,7 +258,7 @@ func changePasswordCommand(ctx context.Context, services ProjectServices, stream
 		Short: "Change a user's password",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			password, err := commandPassword(streams, passwordStdin, "GODJANGO_PASSWORD")
+			password, err := commandPassword(streams, passwordStdin, "GODJANGO_PASSWORD", false)
 			if err != nil {
 				return err
 			}
@@ -248,7 +279,12 @@ func changePasswordCommand(ctx context.Context, services ProjectServices, stream
 	return command
 }
 
-func commandPassword(streams Streams, fromStdin bool, environmentName string) (string, error) {
+func commandPassword(
+	streams Streams,
+	fromStdin bool,
+	environmentName string,
+	noInput bool,
+) (string, error) {
 	if !fromStdin {
 		if password, exists := os.LookupEnv(environmentName); exists {
 			if password == "" {
@@ -256,10 +292,13 @@ func commandPassword(streams Streams, fromStdin bool, environmentName string) (s
 			}
 			return password, nil
 		}
-		return "", fmt.Errorf(
-			"godjango: provide a password with --password-stdin or %s",
-			environmentName,
-		)
+		if noInput {
+			return "", fmt.Errorf(
+				"godjango: provide a password with --password-stdin or %s",
+				environmentName,
+			)
+		}
+		return promptPassword(streams)
 	}
 	scanner := bufio.NewScanner(streams.In)
 	if !scanner.Scan() {
@@ -273,6 +312,52 @@ func commandPassword(streams Streams, fromStdin bool, environmentName string) (s
 		return "", errors.New("godjango: password must not be empty")
 	}
 	return password, nil
+}
+
+func promptLine(streams Streams, prompt string) (string, error) {
+	_, _ = fmt.Fprint(streams.Out, prompt)
+	scanner := bufio.NewScanner(streams.In)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", errors.New("godjango: interactive input ended")
+	}
+	return strings.TrimSpace(strings.TrimSuffix(scanner.Text(), "\r")), nil
+}
+
+func promptPassword(streams Streams) (string, error) {
+	input, ok := streams.In.(*os.File)
+	if !ok || !term.IsTerminal(int(input.Fd())) {
+		return "", errors.New(
+			"godjango: secure password prompt requires a terminal; use --password-stdin or environment",
+		)
+	}
+	first, err := readTerminalPassword(input, streams.Out, "Password: ")
+	if err != nil {
+		return "", err
+	}
+	second, err := readTerminalPassword(input, streams.Out, "Password (again): ")
+	if err != nil {
+		return "", err
+	}
+	if first != second {
+		return "", errors.New("godjango: passwords do not match")
+	}
+	if first == "" {
+		return "", errors.New("godjango: password must not be empty")
+	}
+	return first, nil
+}
+
+func readTerminalPassword(input *os.File, output io.Writer, prompt string) (string, error) {
+	_, _ = fmt.Fprint(output, prompt)
+	password, err := term.ReadPassword(int(input.Fd()))
+	_, _ = fmt.Fprintln(output)
+	if err != nil {
+		return "", err
+	}
+	return string(password), nil
 }
 
 func runServerCommand(ctx context.Context, services ProjectServices, streams Streams) *cobra.Command {

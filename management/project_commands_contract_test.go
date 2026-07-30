@@ -269,6 +269,49 @@ func TestRuntimeAndDatabaseShellCommandsUseExplicitServices(t *testing.T) {
 	}
 }
 
+func TestUserCommandsSupportNonInteractiveEnvironment(t *testing.T) {
+	root := newFixtureProject(t, "example.com/bookshelf", map[string]string{})
+	users := new(fakeUserManager)
+	t.Setenv("GODJANGO_SUPERUSER_USERNAME", "environment-root")
+	t.Setenv("GODJANGO_SUPERUSER_EMAIL", "root@example.com")
+	t.Setenv("GODJANGO_SUPERUSER_PASSWORD", "environment-secret")
+	t.Setenv("GODJANGO_PASSWORD", "changed-secret")
+	options := ProjectOptions{
+		WorkingDirectory: root,
+		Services: ProjectServices{
+			Users: func(context.Context) (UserManager, func() error, error) {
+				return users, nil, nil
+			},
+		},
+	}
+
+	for _, args := range [][]string{
+		{"createsuperuser", "--noinput"},
+		{"changepassword", "environment-root"},
+	} {
+		var output bytes.Buffer
+		if code := ExecuteProject(
+			context.Background(),
+			args,
+			options,
+			Streams{Out: &output, Err: &output},
+		); code != ExitOK {
+			t.Fatalf("%v exit = %d; output=%q", args, code, output.String())
+		}
+		if strings.Contains(output.String(), "secret") {
+			t.Fatalf("%v leaked password in %q", args, output.String())
+		}
+	}
+	if users.superuser.Username != "environment-root" ||
+		users.superuser.Password == nil ||
+		*users.superuser.Password != "environment-secret" {
+		t.Fatalf("superuser options = %#v", users.superuser)
+	}
+	if users.changed != [2]string{"environment-root", "changed-secret"} {
+		t.Fatalf("password change = %#v", users.changed)
+	}
+}
+
 func TestProjectOperationalFailuresReturnFailureAndCleanUp(t *testing.T) {
 	root := newFixtureProject(t, "example.com/bookshelf", map[string]string{})
 	cleanupErr := errors.New("close failed")

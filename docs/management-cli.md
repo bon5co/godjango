@@ -60,7 +60,10 @@ auth manager and Bun store as application code. Passwords come from one line on
 stdin when `--password-stdin` is present. For non-interactive automation,
 `createsuperuser` also accepts `GODJANGO_SUPERUSER_PASSWORD`, and
 `changepassword` accepts `GODJANGO_PASSWORD`. Passwords are never command-line
-arguments or output.
+arguments or output. With a terminal and no automation option, both commands
+use a no-echo, confirmed password prompt. `createsuperuser` prompts for missing
+identity fields; `--noinput` instead requires flags or the corresponding
+`GODJANGO_SUPERUSER_*` variables.
 
 Database, migration, auth, shell, and server services load lazily. `test` and
 source-only commands do not open PostgreSQL. Database-owning commands always
