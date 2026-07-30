@@ -12,7 +12,8 @@ import (
 )
 
 type memoryUserStore struct {
-	users map[string]*auth.User
+	users           map[string]*auth.User
+	passwordUpdates int
 }
 
 func newMemoryUserStore(users ...*auth.User) *memoryUserStore {
@@ -37,6 +38,15 @@ func (s *memoryUserStore) UserByUsername(_ context.Context, username string) (*a
 		return nil, auth.ErrUserNotFound
 	}
 	return user, nil
+}
+
+func (s *memoryUserStore) UpdatePassword(_ context.Context, user *auth.User) error {
+	if _, ok := s.users[user.Username]; !ok {
+		return auth.ErrUserNotFound
+	}
+	s.users[user.Username] = user
+	s.passwordUpdates++
+	return nil
 }
 
 // Django: test_models.py::UserManagerTestCase::{
@@ -166,6 +176,33 @@ func TestCreateSuperuserRequiresStaffAndSuperuserFlags(t *testing.T) {
 				t.Fatalf("CreateSuperuser() error = %v, want %v", err, test.want)
 			}
 		})
+	}
+}
+
+func TestChangePasswordUsesStoreAndInvalidatesOldPassword(t *testing.T) {
+	oldPassword := "old-secret"
+	store := newMemoryUserStore()
+	manager := auth.NewManager(store, auth.NewPasswordHasher())
+	user, err := manager.CreateUser(context.Background(), auth.CreateUserOptions{
+		Username: "alice",
+		Password: &oldPassword,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPassword := "new-secret"
+
+	if err := manager.ChangePassword(context.Background(), "alice", newPassword); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+	if store.passwordUpdates != 1 {
+		t.Fatalf("password updates = %d, want 1", store.passwordUpdates)
+	}
+	if ok, err := user.CheckPassword(auth.NewPasswordHasher(), oldPassword); err != nil || ok {
+		t.Fatalf("old password check = %v, %v; want false, nil", ok, err)
+	}
+	if ok, err := user.CheckPassword(auth.NewPasswordHasher(), newPassword); err != nil || !ok {
+		t.Fatalf("new password check = %v, %v; want true, nil", ok, err)
 	}
 }
 
