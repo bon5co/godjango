@@ -107,7 +107,7 @@ func TestUnitOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunUnitTests: %v\nstderr:\n%s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "unit suite reached") {
+	if !strings.Contains(stdout.String(), "example.com/bookshelf/books") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
