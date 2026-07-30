@@ -24,3 +24,6 @@ go test ./...
 See [the auth test-port plan](docs/django-auth-test-port.md). Bun-backed
 persistence, HTTP forms, middleware, and browser flows remain separate
 test-first delivery slices.
+
+Application configuration uses explicit, typed environment declarations. See
+[environment declarations](docs/environment.md).

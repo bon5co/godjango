@@ -3,6 +3,7 @@ module github.com/bon5co/godjango
 go 1.26.5
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/uptrace/bun v1.2.18
 	golang.org/x/text v0.40.0
 )
