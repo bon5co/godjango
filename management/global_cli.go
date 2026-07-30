@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -77,49 +78,96 @@ func ExecuteGlobal(ctx context.Context, args []string, options GlobalOptions, st
 }
 
 func executeManager(ctx context.Context, root string, args []string, streams Streams) int {
+	err := RunProjectProgram(ctx, root, "./cmd/manage", args, streams)
+	if err == nil {
+		return ExitOK
+	}
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+	return commandStatus(ctx, err, streams.Err)
+}
+
+// RunProjectProgram compiles a project-owned command through the Go build
+// cache, then runs it with attached streams and signal forwarding.
+func RunProjectProgram(
+	ctx context.Context,
+	root string,
+	packagePath string,
+	args []string,
+	streams Streams,
+) error {
+	streams = streams.withDefaults()
 	temporary, err := os.CreateTemp("", "godjango-manage-*")
 	if err != nil {
-		_, _ = fmt.Fprintf(streams.Err, "godjango: create manager executable: %v\n", err)
-		return ExitFailure
+		return fmt.Errorf("godjango: create project executable: %w", err)
 	}
-	managerPath := temporary.Name()
+	programPath := temporary.Name()
 	if closeErr := temporary.Close(); closeErr != nil {
-		_ = os.Remove(managerPath)
-		_, _ = fmt.Fprintf(streams.Err, "godjango: create manager executable: %v\n", closeErr)
-		return ExitFailure
+		_ = os.Remove(programPath)
+		return fmt.Errorf("godjango: create project executable: %w", closeErr)
 	}
-	if removeErr := os.Remove(managerPath); removeErr != nil {
-		_, _ = fmt.Fprintf(streams.Err, "godjango: prepare manager executable: %v\n", removeErr)
-		return ExitFailure
+	if removeErr := os.Remove(programPath); removeErr != nil {
+		return fmt.Errorf("godjango: prepare project executable: %w", removeErr)
 	}
-	defer os.Remove(managerPath)
+	defer os.Remove(programPath)
 
-	managerPackage := "." + string(filepath.Separator) + filepath.Join("cmd", "manage")
-	build := exec.Command("go", "build", "-buildvcs=false", "-o", managerPath, managerPackage)
+	if packagePath == "" {
+		return errors.New("godjango: project package path is required")
+	}
+	cleanPackage := filepath.Clean(packagePath)
+	if filepath.IsAbs(cleanPackage) ||
+		cleanPackage == ".." ||
+		strings.HasPrefix(cleanPackage, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("godjango: project package %q must stay inside the project", packagePath)
+	}
+	packagePath = "." + string(filepath.Separator) + strings.TrimPrefix(
+		cleanPackage,
+		"."+string(filepath.Separator),
+	)
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", programPath, packagePath)
 	build.Dir = root
 	build.Env = os.Environ()
-	build.Stdin = streams.In
 	build.Stdout = streams.Out
 	build.Stderr = streams.Err
 	if err := runAttached(ctx, build); err != nil {
-		return commandStatus(ctx, err, streams.Err)
+		return attachedCommandError(ctx, err)
 	}
 
-	command := exec.Command(managerPath, args...)
+	command := exec.Command(programPath, args...)
 	command.Dir = root
 	command.Env = os.Environ()
 	command.Stdin = streams.In
 	command.Stdout = streams.Out
 	command.Stderr = streams.Err
 	if err := runAttached(ctx, command); err != nil {
-		return commandStatus(ctx, err, streams.Err)
+		return attachedCommandError(ctx, err)
 	}
-	return ExitOK
+	return nil
+}
+
+func attachedCommandError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if code, forwarded := forwardedExitCode(err); forwarded {
+		return &ExitError{Code: code, Err: err}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return &ExitError{Code: processExitCode(exitErr), Err: err}
+	}
+	return err
 }
 
 func commandStatus(ctx context.Context, err error, stderr io.Writer) int {
 	if ctx.Err() != nil {
 		return ExitCanceled
+	}
+	var commandErr *ExitError
+	if errors.As(err, &commandErr) {
+		return commandErr.Code
 	}
 	if code, forwarded := forwardedExitCode(err); forwarded {
 		return code

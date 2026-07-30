@@ -37,6 +37,46 @@ go test -tags=e2e ./...
 GoDjangGo does not emulate Django's test-database lifecycle. Integration
 fixtures own their PostgreSQL database and migration setup.
 
+## Project commands
+
+```bash
+godjango startapp library
+godjango check
+godjango makemigration create_books --app library
+godjango migrate
+godjango migrationstatus
+godjango createsuperuser --username root --email root@example.com --password-stdin
+godjango changepassword root --password-stdin
+godjango dbshell
+godjango runserver
+```
+
+`makemigration` creates paired transactional `.up.sql` and `.down.sql` files
+inside a registered app. It never guesses a schema diff. `migrate` and
+`migrationstatus` collect migrations from the explicit compiled app registry.
+
+Generated projects register the built-in auth app. User commands call the same
+auth manager and Bun store as application code. Passwords come from one line on
+stdin when `--password-stdin` is present. For non-interactive automation,
+`createsuperuser` also accepts `GODJANGO_SUPERUSER_PASSWORD`, and
+`changepassword` accepts `GODJANGO_PASSWORD`. Passwords are never command-line
+arguments or output. With a terminal and no automation option, both commands
+use a no-echo, confirmed password prompt. `createsuperuser` prompts for missing
+identity fields; `--noinput` instead requires flags or the corresponding
+`GODJANGO_SUPERUSER_*` variables.
+
+Database, migration, auth, shell, and server services load lazily. `test` and
+source-only commands do not open PostgreSQL. Database-owning commands always
+close their pool before returning. Generated runtime settings declare
+`DATABASE_URL` as required, with `DEBUG=false` and `PORT=8000` as explicit
+optional defaults; a missing required value fails before the server listens or
+a database command begins.
+
+Each app's `commands.go` returns `[]management.Command`. The generated
+`internal/project/commands.go` registry combines those functions
+deterministically, so custom commands work through both `cmd/manage` and the
+global `godjango` layer without runtime plugins.
+
 ## Intentional differences from Django
 
 - `makemigration` is singular and scaffolds paired explicit SQL. It does not
@@ -44,7 +84,14 @@ fixtures own their PostgreSQL database and migration setup.
 - Static assets embed into Go binaries; there is no `collectstatic`.
 - `dbshell` replaces a Python-style interactive application shell.
 - Custom commands are compiled into `cmd/manage`.
-- Automatic admin UI is omitted. Application-specific admin pages are cheap
-  to generate with contemporary LLM tooling, while the reusable auth,
-  permission, validation, routing, and persistence primitives remain framework
-  responsibilities.
+- Automatic admin UI is omitted. This is a deliberate 2026 tradeoff, not a
+  claim that admin workflows are unnecessary: coding agents can now generate
+  interactive apps and internal tools, and OpenAI reports building an internal
+  product with agent-written application logic, tests, documentation, and
+  tooling in roughly one-tenth the estimated manual time. GoDjangGo therefore
+  spends its framework budget on reusable auth, permission, validation,
+  routing, and persistence primitives, leaving each admin page
+  application-specific. Sources: [Codex for every role, tool, and
+  workflow](https://openai.com/index/codex-for-every-role-tool-workflow/) and
+  [Harness engineering: leveraging Codex in an agent-first
+  world](https://openai.com/index/harness-engineering/).
