@@ -40,6 +40,25 @@ func (s *memoryUserStore) UserByUsername(_ context.Context, username string) (*a
 	return user, nil
 }
 
+func (s *memoryUserStore) UserByID(_ context.Context, id string) (*auth.User, error) {
+	for _, user := range s.users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+	return nil, auth.ErrUserNotFound
+}
+
+func (s *memoryUserStore) UsersByEmail(_ context.Context, email string) ([]*auth.User, error) {
+	var users []*auth.User
+	for _, user := range s.users {
+		if user.Email == email {
+			users = append(users, user)
+		}
+	}
+	return users, nil
+}
+
 func (s *memoryUserStore) UpdatePassword(_ context.Context, user *auth.User) error {
 	if _, ok := s.users[user.Username]; !ok {
 		return auth.ErrUserNotFound

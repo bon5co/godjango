@@ -50,3 +50,9 @@ the process environment. `WithWorkingDirectory` selects an isolated `.env`
 location.
 
 Never commit a `.env` file containing secrets.
+
+Generated HTTP projects declare `DATABASE_URL` and `SESSION_SECRET` as
+required. `DEBUG` defaults to `false`, and `PORT` defaults to `8000`. The full
+schema is validated before `cmd/server` opens PostgreSQL or a network listener.
+Database-only management commands intentionally load only `DATABASE_URL`;
+source scaffolding and unit tests load neither.

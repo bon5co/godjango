@@ -46,6 +46,14 @@ type PasswordUpdater interface {
 	UpdatePassword(ctx context.Context, user *User) error
 }
 
+type UserByIDStore interface {
+	UserByID(ctx context.Context, id string) (*User, error)
+}
+
+type UsersByEmailStore interface {
+	UsersByEmail(ctx context.Context, email string) ([]*User, error)
+}
+
 // Manager owns user behavior over a replaceable persistence boundary.
 type Manager struct {
 	store  UserStore
@@ -98,6 +106,10 @@ func (m *Manager) ChangePassword(ctx context.Context, username, password string)
 	if err != nil {
 		return err
 	}
+	return m.SetPassword(ctx, user, password)
+}
+
+func (m *Manager) SetPassword(ctx context.Context, user *User, password string) error {
 	updater, ok := m.store.(PasswordUpdater)
 	if !ok {
 		return errors.New("godjango auth: user store does not support password updates")
@@ -106,6 +118,22 @@ func (m *Manager) ChangePassword(ctx context.Context, username, password string)
 		return err
 	}
 	return updater.UpdatePassword(ctx, user)
+}
+
+func (m *Manager) UserByID(ctx context.Context, id string) (*User, error) {
+	store, ok := m.store.(UserByIDStore)
+	if !ok {
+		return nil, errors.New("godjango auth: user store does not support ID lookup")
+	}
+	return store.UserByID(ctx, id)
+}
+
+func (m *Manager) UsersByEmail(ctx context.Context, email string) ([]*User, error) {
+	store, ok := m.store.(UsersByEmailStore)
+	if !ok {
+		return nil, errors.New("godjango auth: user store does not support email lookup")
+	}
+	return store.UsersByEmail(ctx, NormalizeEmail(email))
 }
 
 func (m *Manager) Authenticate(ctx context.Context, username, password string) (*User, error) {
