@@ -55,3 +55,7 @@ assets in the binary. See [views](docs/views.md).
 The generated-project E2E suite builds a fresh app, migrates an isolated
 PostgreSQL schema, and drives the production binary through headed Chromium.
 See [the E2E plan](docs/user-system-e2e-plan.md).
+
+Formatting, dependency, license, race, generated-project, PostgreSQL, and
+browser gates use one local/CI command surface. See [continuous
+integration](docs/ci.md).
