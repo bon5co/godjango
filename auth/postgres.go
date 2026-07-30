@@ -154,7 +154,19 @@ func (store *BunStore) GrantUserPermission(
 		userID,
 		permission,
 	)
-	return requireAffected(result, err, "user or permission not found")
+	return requireAffectedOrExists(
+		ctx,
+		store.idb,
+		result,
+		err,
+		`SELECT EXISTS (
+			SELECT 1 FROM auth_user_permissions AS up
+			JOIN auth_permissions AS p ON p.id = up.permission_id
+			WHERE up.user_id = ? AND p.identity = ?
+		)`,
+		userID,
+		permission,
+	)
 }
 
 func (store *BunStore) AddUserToGroup(ctx context.Context, userID, groupName string) error {
@@ -166,7 +178,19 @@ func (store *BunStore) AddUserToGroup(ctx context.Context, userID, groupName str
 		userID,
 		groupName,
 	)
-	return requireAffected(result, err, "user or group not found")
+	return requireAffectedOrExists(
+		ctx,
+		store.idb,
+		result,
+		err,
+		`SELECT EXISTS (
+			SELECT 1 FROM auth_user_groups AS ug
+			JOIN auth_groups AS g ON g.id = ug.group_id
+			WHERE ug.user_id = ? AND g.name = ?
+		)`,
+		userID,
+		groupName,
+	)
 }
 
 func (store *BunStore) GrantGroupPermission(
@@ -184,7 +208,20 @@ func (store *BunStore) GrantGroupPermission(
 		groupName,
 		permission,
 	)
-	return requireAffected(result, err, "group or permission not found")
+	return requireAffectedOrExists(
+		ctx,
+		store.idb,
+		result,
+		err,
+		`SELECT EXISTS (
+			SELECT 1 FROM auth_group_permissions AS gp
+			JOIN auth_groups AS g ON g.id = gp.group_id
+			JOIN auth_permissions AS p ON p.id = gp.permission_id
+			WHERE g.name = ? AND p.identity = ?
+		)`,
+		groupName,
+		permission,
+	)
 }
 
 func (store *BunStore) RunInTx(
@@ -196,7 +233,14 @@ func (store *BunStore) RunInTx(
 	})
 }
 
-func requireAffected(result sql.Result, err error, message string) error {
+func requireAffectedOrExists(
+	ctx context.Context,
+	idb bun.IDB,
+	result sql.Result,
+	err error,
+	query string,
+	args ...any,
+) error {
 	if err != nil {
 		return err
 	}
@@ -205,7 +249,13 @@ func requireAffected(result sql.Result, err error, message string) error {
 		return err
 	}
 	if affected == 0 {
-		return errors.New("godjango auth: " + message)
+		var exists bool
+		if err := idb.NewRaw(query, args...).Scan(ctx, &exists); err != nil {
+			return err
+		}
+		if !exists {
+			return errors.New("godjango auth: referenced access object not found")
+		}
 	}
 	return nil
 }

@@ -314,7 +314,7 @@ func TestSessionPersistenceRoundTripUpdateDeleteAndExpiry(t *testing.T) {
 	db := authDatabase(t)
 	store := auth.NewBunStore(db)
 	ctx := context.Background()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	key := uniqueAuthValue(t, "session")
 
 	session := auth.StoredSession{

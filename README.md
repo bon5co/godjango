@@ -36,3 +36,7 @@ See [database lifecycle](docs/database.md).
 
 Schema changes use explicit, paired, transactional Bun SQL migrations. See
 [explicit migrations](docs/migrations.md).
+
+The default user, group, permission, and session store is PostgreSQL-backed
+without exposing Bun through auth domain APIs. See
+[auth persistence](docs/auth-persistence.md).
