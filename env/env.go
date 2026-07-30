@@ -2,8 +2,10 @@
 package env
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,8 +22,22 @@ var ErrInvalidEnvironment = errors.New("godjango env: invalid environment")
 // Secret is an environment value that must be redacted in diagnostics.
 type Secret string
 
+const redactedSecret = "[REDACTED]"
+
 func (Secret) String() string {
-	return "[REDACTED]"
+	return redactedSecret
+}
+
+func (Secret) GoString() string {
+	return "env.Secret(" + strconv.Quote(redactedSecret) + ")"
+}
+
+func (Secret) LogValue() slog.Value {
+	return slog.StringValue(redactedSecret)
+}
+
+func (Secret) MarshalJSON() ([]byte, error) {
+	return json.Marshal(redactedSecret)
 }
 
 func (s Secret) Reveal() string {
