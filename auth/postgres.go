@@ -66,13 +66,49 @@ func (store *BunStore) UserByUsername(ctx context.Context, username string) (*Us
 		Model(user).
 		Where("username = ?", username).
 		Scan(ctx)
+	return store.finishUserLookup(ctx, user, err)
+}
+
+func (store *BunStore) UserByID(ctx context.Context, id string) (*User, error) {
+	user := new(User)
+	err := store.idb.NewSelect().
+		Model(user).
+		Where("id = ?", id).
+		Scan(ctx)
+	return store.finishUserLookup(ctx, user, err)
+}
+
+func (store *BunStore) UsersByEmail(ctx context.Context, email string) ([]*User, error) {
+	var users []*User
+	if err := store.idb.NewSelect().
+		Model(&users).
+		Where("email = ?", email).
+		OrderExpr("id").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		if err := store.loadUserAccess(ctx, user); err != nil {
+			return nil, err
+		}
+	}
+	return users, nil
+}
+
+func (store *BunStore) finishUserLookup(ctx context.Context, user *User, err error) (*User, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if err := store.loadUserAccess(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
 
+func (store *BunStore) loadUserAccess(ctx context.Context, user *User) error {
 	if err := store.idb.NewSelect().
 		TableExpr("auth_permissions AS p").
 		ColumnExpr("p.identity").
@@ -80,7 +116,7 @@ func (store *BunStore) UserByUsername(ctx context.Context, username string) (*Us
 		Where("up.user_id = ?", user.ID).
 		OrderExpr("p.identity").
 		Scan(ctx, &user.DirectPermissions); err != nil {
-		return nil, err
+		return err
 	}
 
 	type groupPermissionRow struct {
@@ -98,7 +134,7 @@ func (store *BunStore) UserByUsername(ctx context.Context, username string) (*Us
 		Where("ug.user_id = ?", user.ID).
 		OrderExpr("g.name, p.identity").
 		Scan(ctx, &rows); err != nil {
-		return nil, err
+		return err
 	}
 	groups := make(map[string]*Group)
 	var order []string
@@ -116,7 +152,7 @@ func (store *BunStore) UserByUsername(ctx context.Context, username string) (*Us
 	for _, name := range order {
 		user.Groups = append(user.Groups, *groups[name])
 	}
-	return user, nil
+	return nil
 }
 
 func (store *BunStore) UpdatePassword(ctx context.Context, user *User) error {
