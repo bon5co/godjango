@@ -190,10 +190,18 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		token  string
+		origin string
 		status int
 	}{
 		{name: "missing", status: http.StatusForbidden},
 		{name: "wrong", token: strings.Repeat("x", len(token)), status: http.StatusForbidden},
+		{
+			name:   "foreign origin",
+			token:  token,
+			origin: "https://evil.example",
+			status: http.StatusForbidden,
+		},
+		{name: "same origin", token: token, origin: server.URL, status: http.StatusNoContent},
 		{name: "valid", token: token, status: http.StatusNoContent},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -203,6 +211,9 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 			}
 			if test.token != "" {
 				request.Header.Set("X-CSRF-Token", test.token)
+			}
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
 			}
 			response, err := client.Do(request)
 			if err != nil {

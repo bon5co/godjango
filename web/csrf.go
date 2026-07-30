@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -89,6 +90,10 @@ func (csrf *CSRF) Middleware(next http.Handler) http.Handler {
 		})
 
 		if !safeMethod(request.Method) {
+			if !validRequestOrigin(request) {
+				WriteError(response, request, http.StatusForbidden, "csrf_failed")
+				return
+			}
 			presented := request.Header.Get("X-CSRF-Token")
 			if presented == "" {
 				if err := request.ParseForm(); err == nil {
@@ -102,6 +107,23 @@ func (csrf *CSRF) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(response, request)
 	})
+}
+
+func validRequestOrigin(request *http.Request) bool {
+	origin := strings.TrimSpace(request.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.User != nil || parsed.Path != "" {
+		return false
+	}
+	expectedScheme := "http"
+	if request.TLS != nil {
+		expectedScheme = "https"
+	}
+	return parsed.Scheme == expectedScheme &&
+		strings.EqualFold(parsed.Host, request.Host)
 }
 
 func CSRFToken(request *http.Request) string {

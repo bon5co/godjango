@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -57,6 +59,22 @@ func NewSessions(config SessionConfig, store scs.Store) (*Sessions, error) {
 	manager.Cookie.Secure = config.Secure
 	manager.Cookie.SameSite = sameSite
 	manager.Cookie.Persist = config.Persistent
+	manager.HashTokenInStore = true
+	manager.ErrorFunc = func(
+		response http.ResponseWriter,
+		request *http.Request,
+		err error,
+	) {
+		slog.ErrorContext(
+			request.Context(),
+			"session persistence failed",
+			"request_id",
+			RequestIDFromContext(request.Context()),
+			"error_type",
+			fmt.Sprintf("%T", err),
+		)
+		WriteError(response, request, http.StatusInternalServerError, "session_unavailable")
+	}
 	return &Sessions{manager: manager}, nil
 }
 
