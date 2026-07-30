@@ -33,3 +33,6 @@ Projects use validated settings and an explicit ordered app registry. See
 
 Bun/PostgreSQL connections use a validated, bounded, Railway-safe lifecycle.
 See [database lifecycle](docs/database.md).
+
+Schema changes use explicit, paired, transactional Bun SQL migrations. See
+[explicit migrations](docs/migrations.md).
