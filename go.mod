@@ -15,6 +15,7 @@ require (
 )
 
 require (
+	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
