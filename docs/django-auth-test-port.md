@@ -57,7 +57,7 @@ Do not port implementation accidents:
 | handlers/basic/login | 24 | Adapt request/session behavior |
 | admin multi-DB | 2 | Drop; automatic admin is out of scope |
 
-## Red slice 1
+## Slice 1
 
 The first executable Go contracts cover:
 
@@ -70,9 +70,10 @@ The first executable Go contracts cover:
 - login/logout session rotation and invalidation
 - password reset token expiry and invalidation
 
-Production methods currently return `auth.ErrNotImplemented`. Tests must compile
-and fail. The next TDD step implements one vertical behavior at a time and keeps
-unrelated failures red.
+The contracts were committed as a compiling, intentionally failing baseline
+before implementation. The in-memory domain slice now passes. Bun-backed
+persistence, HTTP flows, and the remaining upstream behaviors stay in separate
+test-first slices so each contract is red before its implementation lands.
 
 ## Later verification
 

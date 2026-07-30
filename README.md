@@ -15,10 +15,12 @@ authentication backends, permissions, groups, sessions, login/logout,
 password-reset tokens, forms, middleware, and management commands.
 
 Development starts from behavioral tests adapted from Django upstream. The
-current branch is intentionally the red phase of TDD:
+first in-memory auth domain slice now passes its ported contracts:
 
 ```bash
 go test ./...
 ```
 
-See [the auth test-port plan](docs/django-auth-test-port.md).
+See [the auth test-port plan](docs/django-auth-test-port.md). Bun-backed
+persistence, HTTP forms, middleware, and browser flows remain separate
+test-first delivery slices.

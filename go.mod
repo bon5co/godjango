@@ -2,7 +2,10 @@ module github.com/bon5co/godjango
 
 go 1.26.5
 
-require github.com/uptrace/bun v1.2.18
+require (
+	github.com/uptrace/bun v1.2.18
+	golang.org/x/text v0.40.0
+)
 
 require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
