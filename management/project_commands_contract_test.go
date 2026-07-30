@@ -297,3 +297,33 @@ func TestProjectOperationalFailuresReturnFailureAndCleanUp(t *testing.T) {
 		t.Fatalf("cleaned=%v output=%q", cleaned, output.String())
 	}
 }
+
+func TestProjectHelpListsDjangoStyleBuiltIns(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := ExecuteProject(
+		context.Background(),
+		[]string{"--help"},
+		ProjectOptions{WorkingDirectory: t.TempDir()},
+		Streams{Out: &stdout, Err: &stderr},
+	)
+	if code != ExitOK {
+		t.Fatalf("exit = %d; stderr=%q", code, stderr.String())
+	}
+	for _, command := range []string{
+		"changepassword",
+		"check",
+		"createsuperuser",
+		"dbshell",
+		"makemigration",
+		"migrate",
+		"migrationstatus",
+		"runserver",
+		"startapp",
+		"test",
+	} {
+		if !strings.Contains(stdout.String(), command) {
+			t.Errorf("help %q does not contain %q", stdout.String(), command)
+		}
+	}
+}

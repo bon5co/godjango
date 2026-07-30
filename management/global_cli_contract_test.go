@@ -100,6 +100,40 @@ func main() { os.Exit(7) }
 	}
 }
 
+func TestGlobalCLIBuildDoesNotConsumeManagerStdin(t *testing.T) {
+	root := newManagerFixture(t, `package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+)
+
+func main() {
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		os.Exit(9)
+	}
+	fmt.Println(scanner.Text())
+}
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := ExecuteGlobal(
+		context.Background(),
+		[]string{"fixture"},
+		GlobalOptions{WorkingDirectory: root},
+		Streams{In: strings.NewReader("manager-secret\n"), Out: &stdout, Err: &stderr},
+	)
+	if code != ExitOK {
+		t.Fatalf("exit code = %d; stderr = %q", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "manager-secret" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestGlobalCLIOutsideProjectFailsWithUsageStatus(t *testing.T) {
 	var stderr bytes.Buffer
 	code := ExecuteGlobal(

@@ -31,6 +31,7 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 		"cmd/manage/main.go",
 		"cmd/server/main.go",
 		"internal/project/apps.go",
+		"internal/project/commands.go",
 		"internal/project/settings.go",
 	} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil {
@@ -195,6 +196,67 @@ func TestGeneratedProject(t *testing.T) { t.Fatal("generated failure") }
 	}
 	if !strings.Contains(stdout.String(), "generated failure") {
 		t.Fatalf("failure stdout = %q", stdout.String())
+	}
+}
+
+func TestGeneratedProjectRunsExplicitCustomCommandThroughBothCLILayers(t *testing.T) {
+	parent := t.TempDir()
+	frameworkRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffolder := Scaffolder{
+		FrameworkVersion: "v0.0.0",
+		FrameworkReplace: frameworkRoot,
+	}
+	root, err := scaffolder.StartProject(context.Background(), parent, "bookshelf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffolder.StartApp(root, "library"); err != nil {
+		t.Fatal(err)
+	}
+	commandSource := `package library
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/bon5co/godjango/management"
+)
+
+func Commands() []management.Command {
+	return []management.Command{{
+		Name: "hello",
+		Summary: "Run a fixture command",
+		Run: func(_ context.Context, args []string, streams management.Streams) error {
+			fmt.Fprintf(streams.Out, "hello %s\n", args[0])
+			return nil
+		},
+	}}
+}
+`
+	if err := os.WriteFile(
+		filepath.Join(root, "apps", "library", "commands.go"),
+		[]byte(commandSource),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := ExecuteGlobal(
+		context.Background(),
+		[]string{"hello", "Handler"},
+		GlobalOptions{WorkingDirectory: filepath.Join(root, "apps", "library")},
+		Streams{Out: &stdout, Err: &stderr},
+	)
+	if code != ExitOK {
+		t.Fatalf("exit = %d; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "hello Handler" {
+		t.Fatalf("stdout = %q", got)
 	}
 }
 

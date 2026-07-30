@@ -98,7 +98,11 @@ func main() {
 	os.Exit(management.ExecuteProject(
 		context.Background(),
 		os.Args[1:],
-		management.ProjectOptions{Project: configured},
+		management.ProjectOptions{
+			Project:  configured,
+			Services: configuredproject.Services(),
+			Commands: configuredproject.Commands(),
+		},
 		management.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr},
 	))
 }
@@ -123,6 +127,7 @@ func Configure() (*gdproject.Project, error) {
 	return gdproject.New(Settings{}, Apps()...)
 }
 `),
+		"internal/project/services.go": generatedServicesSource,
 	}
 	for name, content := range files {
 		if strings.HasSuffix(name, ".go") {
@@ -178,24 +183,49 @@ func (scaffolder Scaffolder) StartApp(root, name string) error {
 	}
 	appSource := fmt.Sprintf(`package %s
 
+import (
+	"embed"
+	"io/fs"
+)
+
 type App struct{}
 
 func New() *App { return &App{} }
 
 func (*App) Name() string { return %q }
+
+//go:embed migrations
+var migrationFiles embed.FS
+
+func (*App) MigrationFS() fs.FS {
+	files, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		panic(err)
+	}
+	return files
+}
 `, name, name)
 	files := map[string]string{
-		"app.go":      appSource,
-		"models.go":   "package " + name + "\n",
-		"routes.go":   "package " + name + "\n",
-		"commands.go": "package " + name + "\n",
+		"app.go":    appSource,
+		"models.go": "package " + name + "\n",
+		"routes.go": "package " + name + "\n",
+		"commands.go": `package ` + name + `
+
+import "github.com/bon5co/godjango/management"
+
+func Commands() []management.Command { return nil }
+`,
+		"migrations/README.md": "# Explicit paired SQL migrations for this app.\n",
 	}
 	for fileName, content := range files {
-		formatted, formatErr := format.Source([]byte(content))
-		if formatErr != nil {
-			return formatErr
+		if strings.HasSuffix(fileName, ".go") {
+			formatted, formatErr := format.Source([]byte(content))
+			if formatErr != nil {
+				return formatErr
+			}
+			content = string(formatted)
 		}
-		if err := writeNew(filepath.Join(appRoot, fileName), string(formatted)); err != nil {
+		if err := writeNew(filepath.Join(appRoot, filepath.FromSlash(fileName)), content); err != nil {
 			return err
 		}
 	}
@@ -215,18 +245,22 @@ func writeAppRegistry(root, module string, apps []string) error {
 	sort.Strings(apps)
 	var imports strings.Builder
 	var values strings.Builder
+	var commands strings.Builder
 	for _, app := range apps {
 		_, _ = fmt.Fprintf(&imports, "\t%q\n", module+"/apps/"+app)
 		_, _ = fmt.Fprintf(&values, "\t\t%s.New(),\n", app)
+		_, _ = fmt.Fprintf(&commands, "\tregistered = append(registered, %s.Commands()...)\n", app)
 	}
 	source := fmt.Sprintf(`package project
 
 import (
+	"github.com/bon5co/godjango/auth"
 	gdproject "github.com/bon5co/godjango/project"
 %s)
 
 func Apps() []gdproject.App {
 	return []gdproject.App{
+		auth.App,
 %s	}
 }
 `, imports.String(), values.String())
@@ -235,7 +269,30 @@ func Apps() []gdproject.App {
 		return err
 	}
 	path := filepath.Join(root, "internal", "project", "apps.go")
-	return os.WriteFile(path, formatted, 0o644)
+	if err := os.WriteFile(path, formatted, 0o644); err != nil {
+		return err
+	}
+
+	commandSource := fmt.Sprintf(`package project
+
+import (
+	"github.com/bon5co/godjango/management"
+%s)
+
+func Commands() []management.Command {
+	var registered []management.Command
+%s	return registered
+}
+`, imports.String(), commands.String())
+	formattedCommands, err := format.Source([]byte(commandSource))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(
+		filepath.Join(root, "internal", "project", "commands.go"),
+		formattedCommands,
+		0o644,
+	)
 }
 
 func appDirectories(root string) ([]string, error) {
@@ -281,6 +338,9 @@ func runGoModTidy(ctx context.Context, root string) error {
 }
 
 func writeNew(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
@@ -291,3 +351,99 @@ func writeNew(path, content string) error {
 	}
 	return file.Close()
 }
+
+const generatedServicesSource = `package project
+
+import (
+	"context"
+	"errors"
+
+	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/database"
+	"github.com/bon5co/godjango/env"
+	"github.com/bon5co/godjango/management"
+	"github.com/bon5co/godjango/migrations"
+)
+
+type RuntimeSettings struct {
+	DatabaseURL env.Secret
+	Debug       bool
+	Port        int
+}
+
+func LoadRuntimeSettings() (RuntimeSettings, error) {
+	root, err := management.DiscoverProject(".")
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	var settings RuntimeSettings
+	schema := env.New(
+		env.Required("DATABASE_URL", &settings.DatabaseURL),
+		env.Optional("DEBUG", &settings.Debug, false),
+		env.Optional("PORT", &settings.Port, 8000),
+	)
+	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
+		return RuntimeSettings{}, err
+	}
+	return settings, nil
+}
+
+func Services() management.ProjectServices {
+	return management.ProjectServices{
+		Migrations: openMigrations,
+		Users: openUsers,
+		DatabaseShell: func(
+			ctx context.Context,
+			args []string,
+			streams management.Streams,
+		) error {
+			settings, err := LoadRuntimeSettings()
+			if err != nil {
+				return err
+			}
+			return management.RunDatabaseShell(ctx, settings.DatabaseURL.Reveal(), args, streams)
+		},
+	}
+}
+
+func openDatabase(ctx context.Context) (*database.DB, error) {
+	settings, err := LoadRuntimeSettings()
+	if err != nil {
+		return nil, err
+	}
+	return database.Open(ctx, database.DefaultConfig(settings.DatabaseURL.Reveal()))
+}
+
+func openMigrations(
+	ctx context.Context,
+) (management.MigrationManager, func() error, error) {
+	db, err := openDatabase(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	configured, err := Configure()
+	if err != nil {
+		return nil, nil, errors.Join(err, db.Close())
+	}
+	catalog, err := migrations.Collect(configured)
+	if err != nil {
+		return nil, nil, errors.Join(err, db.Close())
+	}
+	runner, err := migrations.NewRunner(db, catalog, migrations.DefaultRunnerConfig())
+	if err != nil {
+		return nil, nil, errors.Join(err, db.Close())
+	}
+	return runner, db.Close, nil
+}
+
+func openUsers(
+	ctx context.Context,
+) (management.UserManager, func() error, error) {
+	db, err := openDatabase(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	manager := auth.NewManager(auth.NewBunStore(db), auth.NewPasswordHasher())
+	return manager, db.Close, nil
+}
+`

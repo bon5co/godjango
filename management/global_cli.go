@@ -98,7 +98,6 @@ func executeManager(ctx context.Context, root string, args []string, streams Str
 	build := exec.Command("go", "build", "-buildvcs=false", "-o", managerPath, managerPackage)
 	build.Dir = root
 	build.Env = os.Environ()
-	build.Stdin = streams.In
 	build.Stdout = streams.Out
 	build.Stderr = streams.Err
 	if err := runAttached(ctx, build); err != nil {
