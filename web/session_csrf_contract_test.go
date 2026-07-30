@@ -138,7 +138,7 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := sessions.Middleware(csrf.Middleware(http.HandlerFunc(
+	handler := BodyLimit(128)(sessions.Middleware(csrf.Middleware(http.HandlerFunc(
 		func(response http.ResponseWriter, request *http.Request) {
 			switch request.URL.Path {
 			case "/token":
@@ -156,7 +156,7 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 				_, _ = io.WriteString(response, CSRFToken(request))
 			}
 		},
-	)))
+	))))
 	server := httptest.NewTLSServer(handler)
 	defer server.Close()
 	jar, err := cookiejar.New(nil)
@@ -224,6 +224,24 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.StatusCode, test.status)
 			}
 		})
+	}
+
+	oversizedRequest, err := http.NewRequest(
+		http.MethodPost,
+		server.URL+"/submit",
+		struct{ io.Reader }{strings.NewReader("field=" + strings.Repeat("x", 256))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversizedRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	oversizedResponse, err := client.Do(oversizedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversizedResponse.Body.Close()
+	if oversizedResponse.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized CSRF form status = %d, want 413", oversizedResponse.StatusCode)
 	}
 
 	loginRequest, err := http.NewRequest(http.MethodPost, server.URL+"/login", nil)

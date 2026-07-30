@@ -96,9 +96,21 @@ func (csrf *CSRF) Middleware(next http.Handler) http.Handler {
 			}
 			presented := request.Header.Get("X-CSRF-Token")
 			if presented == "" {
-				if err := request.ParseForm(); err == nil {
-					presented = request.PostForm.Get("csrf_token")
+				if err := request.ParseForm(); err != nil {
+					var limitErr *http.MaxBytesError
+					if errors.As(err, &limitErr) {
+						WriteError(
+							response,
+							request,
+							http.StatusRequestEntityTooLarge,
+							"body_too_large",
+						)
+					} else {
+						WriteError(response, request, http.StatusBadRequest, "invalid_form")
+					}
+					return
 				}
+				presented = request.PostForm.Get("csrf_token")
 			}
 			if !validCSRFToken(secret, presented) {
 				WriteError(response, request, http.StatusForbidden, "csrf_failed")
