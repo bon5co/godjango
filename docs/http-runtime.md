@@ -67,7 +67,8 @@ The built-in routes provide:
 - expiring reset confirmation whose token becomes invalid after password
   change.
 
-HTML is deliberately minimal until the templ/HTMX/Alpine presentation layer.
+Authentication HTML uses the shared templ/HTMX presentation layer documented in
+[views](views.md).
 Values redisplayed in forms are HTML-escaped. `Form` provides typed validation,
 stable field/non-field errors, and defensive copies.
 

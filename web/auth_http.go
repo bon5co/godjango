@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"html"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/web/view"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -149,14 +149,7 @@ func RequireAuthentication() func(http.Handler) http.Handler {
 }
 
 func (handlers *AuthHandlers) loginForm(response http.ResponseWriter, request *http.Request) {
-	setCSRFHeader(response, request)
-	next := request.URL.Query().Get("next")
-	_, _ = fmt.Fprintf(
-		response,
-		`<!doctype html><form method="post"><input type="hidden" name="csrf_token" value="%s"><input name="username"><input type="password" name="password"><input type="hidden" name="next" value="%s"></form>`,
-		html.EscapeString(CSRFToken(request)),
-		html.EscapeString(next),
-	)
+	handlers.renderLogin(response, request, request.URL.Query().Get("next"), "", nil)
 }
 
 func (handlers *AuthHandlers) login(response http.ResponseWriter, request *http.Request) {
@@ -181,12 +174,12 @@ func (handlers *AuthHandlers) login(response http.ResponseWriter, request *http.
 	}
 	if user == nil {
 		form.AddError("", "credentials were not accepted")
-		response.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = fmt.Fprintf(
+		handlers.renderLogin(
 			response,
-			`<!doctype html><input name="username" value="%s"><p>%s</p>`,
-			html.EscapeString(form.Value("username")),
-			html.EscapeString(strings.Join(form.Errors()[""], " ")),
+			request,
+			form.Value("next"),
+			form.Value("username"),
+			form.Errors(),
 		)
 		return
 	}
@@ -222,12 +215,7 @@ func (handlers *AuthHandlers) passwordChangeForm(
 	response http.ResponseWriter,
 	request *http.Request,
 ) {
-	setCSRFHeader(response, request)
-	_, _ = fmt.Fprintf(
-		response,
-		`<!doctype html><form method="post"><input type="hidden" name="csrf_token" value="%s"><input type="password" name="old_password"><input type="password" name="new_password1"><input type="password" name="new_password2"></form>`,
-		html.EscapeString(CSRFToken(request)),
-	)
+	handlers.renderPasswordChange(response, request, nil)
 }
 
 func (handlers *AuthHandlers) passwordChange(response http.ResponseWriter, request *http.Request) {
@@ -261,8 +249,7 @@ func (handlers *AuthHandlers) passwordChange(response http.ResponseWriter, reque
 		}
 	}
 	if !form.Valid() {
-		response.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = fmt.Fprint(response, "password change was not accepted")
+		handlers.renderPasswordChange(response, request, form.Errors())
 		return
 	}
 	if err := handlers.config.Backend.SetPassword(
@@ -289,12 +276,7 @@ func (handlers *AuthHandlers) passwordResetForm(
 	response http.ResponseWriter,
 	request *http.Request,
 ) {
-	setCSRFHeader(response, request)
-	_, _ = fmt.Fprintf(
-		response,
-		`<!doctype html><form method="post"><input type="hidden" name="csrf_token" value="%s"><input name="email"></form>`,
-		html.EscapeString(CSRFToken(request)),
-	)
+	handlers.renderPasswordReset(response, request, "", nil)
 }
 
 func (handlers *AuthHandlers) passwordReset(response http.ResponseWriter, request *http.Request) {
@@ -306,12 +288,7 @@ func (handlers *AuthHandlers) passwordReset(response http.ResponseWriter, reques
 	form.Required("email")
 	form.Email("email")
 	if !form.Valid() {
-		response.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = fmt.Fprintf(
-			response,
-			`<!doctype html><input name="email" value="%s"><p>Enter a valid email address.</p>`,
-			html.EscapeString(form.Value("email")),
-		)
+		handlers.renderPasswordReset(response, request, form.Value("email"), form.Errors())
 		return
 	}
 	email := auth.NormalizeEmail(strings.TrimSpace(form.Value("email")))
@@ -373,11 +350,7 @@ func (handlers *AuthHandlers) passwordResetConfirmForm(
 		return
 	}
 	setCSRFHeader(response, request)
-	_, _ = fmt.Fprintf(
-		response,
-		`<!doctype html><form method="post"><input type="hidden" name="csrf_token" value="%s"><input type="password" name="new_password1"><input type="password" name="new_password2"></form>`,
-		html.EscapeString(CSRFToken(request)),
-	)
+	handlers.renderPasswordResetConfirm(response, request, nil)
 }
 
 func (handlers *AuthHandlers) passwordResetConfirm(
@@ -400,8 +373,7 @@ func (handlers *AuthHandlers) passwordResetConfirm(
 		form.AddError("new_password2", "The two password fields did not match.")
 	}
 	if !form.Valid() {
-		response.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = fmt.Fprint(response, "password reset was not accepted")
+		handlers.renderPasswordResetConfirm(response, request, form.Errors())
 		return
 	}
 	if err := handlers.config.Backend.SetPassword(
@@ -437,6 +409,154 @@ func (handlers *AuthHandlers) resetUser(request *http.Request) (*auth.User, bool
 		return nil, false
 	}
 	return user, handlers.config.ResetTokens.Check(user, chi.URLParam(request, "token"))
+}
+
+func (handlers *AuthHandlers) renderLogin(
+	response http.ResponseWriter,
+	request *http.Request,
+	next string,
+	username string,
+	errors map[string][]string,
+) {
+	handlers.renderForm(response, request, "Sign in", view.FormData{
+		Action:       "/accounts/login/",
+		Method:       http.MethodPost,
+		CSRFToken:    CSRFToken(request),
+		ErrorSummary: errors[""],
+		Fields: []view.Field{
+			{
+				Name:         "username",
+				Label:        "Username",
+				Value:        username,
+				Autocomplete: "username",
+				Errors:       errors["username"],
+			},
+			{
+				Name:         "password",
+				Label:        "Password",
+				Type:         "password",
+				Autocomplete: "current-password",
+				Errors:       errors["password"],
+			},
+			{Name: "next", Type: "hidden", Value: next},
+		},
+		SubmitLabel: "Sign in",
+	}, errors)
+}
+
+func (handlers *AuthHandlers) renderPasswordChange(
+	response http.ResponseWriter,
+	request *http.Request,
+	errors map[string][]string,
+) {
+	handlers.renderForm(response, request, "Change password", view.FormData{
+		Action:    "/accounts/password-change/",
+		Method:    http.MethodPost,
+		CSRFToken: CSRFToken(request),
+		Fields: []view.Field{
+			{
+				Name:         "old_password",
+				Label:        "Current password",
+				Type:         "password",
+				Autocomplete: "current-password",
+				Errors:       errors["old_password"],
+			},
+			{
+				Name:         "new_password1",
+				Label:        "New password",
+				Type:         "password",
+				Autocomplete: "new-password",
+				Errors:       errors["new_password1"],
+			},
+			{
+				Name:         "new_password2",
+				Label:        "Confirm new password",
+				Type:         "password",
+				Autocomplete: "new-password",
+				Errors:       errors["new_password2"],
+			},
+		},
+		SubmitLabel: "Change password",
+	}, errors)
+}
+
+func (handlers *AuthHandlers) renderPasswordReset(
+	response http.ResponseWriter,
+	request *http.Request,
+	email string,
+	errors map[string][]string,
+) {
+	handlers.renderForm(response, request, "Reset password", view.FormData{
+		Action:    "/accounts/password-reset/",
+		Method:    http.MethodPost,
+		CSRFToken: CSRFToken(request),
+		Fields: []view.Field{{
+			Name:         "email",
+			Label:        "Email address",
+			Type:         "email",
+			Value:        email,
+			Autocomplete: "email",
+			Errors:       errors["email"],
+		}},
+		SubmitLabel: "Send reset link",
+	}, errors)
+}
+
+func (handlers *AuthHandlers) renderPasswordResetConfirm(
+	response http.ResponseWriter,
+	request *http.Request,
+	errors map[string][]string,
+) {
+	handlers.renderForm(response, request, "Choose a new password", view.FormData{
+		Action:    request.URL.Path,
+		Method:    http.MethodPost,
+		CSRFToken: CSRFToken(request),
+		Fields: []view.Field{
+			{
+				Name:         "new_password1",
+				Label:        "New password",
+				Type:         "password",
+				Autocomplete: "new-password",
+				Errors:       errors["new_password1"],
+			},
+			{
+				Name:         "new_password2",
+				Label:        "Confirm new password",
+				Type:         "password",
+				Autocomplete: "new-password",
+				Errors:       errors["new_password2"],
+			},
+		},
+		SubmitLabel: "Reset password",
+	}, errors)
+}
+
+func (handlers *AuthHandlers) renderForm(
+	response http.ResponseWriter,
+	request *http.Request,
+	title string,
+	form view.FormData,
+	errors map[string][]string,
+) {
+	setCSRFHeader(response, request)
+	status := http.StatusOK
+	if len(errors) > 0 {
+		status = http.StatusUnprocessableEntity
+	}
+	content := view.Page(title, view.Form(form))
+	if view.IsHTMX(request) {
+		content = view.Form(form)
+	}
+	err := view.Render(response, request, view.RenderOptions{
+		Title:       title,
+		Content:     content,
+		CSRFToken:   CSRFToken(request),
+		CachePolicy: view.NoStore,
+		Status:      status,
+	})
+	if err != nil {
+		slog.ErrorContext(request.Context(), "auth page render failed", "error", err)
+	}
 }
 
 func setCSRFHeader(response http.ResponseWriter, request *http.Request) {

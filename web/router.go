@@ -6,6 +6,7 @@ import (
 
 	"github.com/bon5co/godjango/auth"
 	"github.com/bon5co/godjango/project"
+	"github.com/bon5co/godjango/web/view"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -29,6 +30,7 @@ func NewRouter(config RouterConfig) (chi.Router, error) {
 		}
 		router.Use(middleware)
 	}
+	router.Handle("/static/godjango/*", view.Assets())
 	for _, app := range config.Project.Apps() {
 		if routes, ok := app.(RouteProvider); ok {
 			routes.Routes(router)
