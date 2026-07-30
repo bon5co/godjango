@@ -40,3 +40,7 @@ Schema changes use explicit, paired, transactional Bun SQL migrations. See
 The default user, group, permission, and session store is PostgreSQL-backed
 without exposing Bun through auth domain APIs. See
 [auth persistence](docs/auth-persistence.md).
+
+The Django-familiar management CLI uses a global discovery/scaffolding layer
+and a compiled project-local manager. `godjango test` runs only the ordinary Go
+unit suite by default. See [management CLI](docs/management-cli.md).
