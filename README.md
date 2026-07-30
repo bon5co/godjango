@@ -51,3 +51,7 @@ complete login/logout/password flows. See [HTTP runtime](docs/http-runtime.md).
 The view layer renders shared templ components as full pages or HTMX fragments,
 uses Alpine's CSP build only for transient browser state, and embeds pinned
 assets in the binary. See [views](docs/views.md).
+
+The generated-project E2E suite builds a fresh app, migrates an isolated
+PostgreSQL schema, and drives the production binary through headed Chromium.
+See [the E2E plan](docs/user-system-e2e-plan.md).

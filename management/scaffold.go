@@ -174,6 +174,14 @@ func main() {
 	resetSecret := derive(settings.SessionSecret.Reveal(), "password-reset")
 	router, err := web.NewRouter(web.RouterConfig{
 		Project: configured,
+		Services: web.RuntimeServices{
+			Database: db,
+			Users: manager,
+			AuthStore: store,
+			Login: func(request *http.Request, user *auth.User) error {
+				return auth.Login(web.SessionFromRequest(request), user, sessionSecret)
+			},
+		},
 		Middleware: []web.Middleware{
 			web.RequestID(),
 			web.Recover(),
@@ -202,9 +210,11 @@ func main() {
 		exit(err)
 	}
 	authHandlers.Routes(router)
-	router.Get("/healthz", func(response http.ResponseWriter, _ *http.Request) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("GET /healthz", func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusNoContent)
 	})
+	handler.Handle("/", router)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		exit(err)
@@ -213,7 +223,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := web.Server{
-		Handler: router,
+		Handler: handler,
 		ShutdownTimeout: 10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second,

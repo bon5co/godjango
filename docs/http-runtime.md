@@ -69,6 +69,15 @@ The built-in routes provide:
 
 Authentication HTML uses the shared templ/HTMX presentation layer documented in
 [views](views.md).
+
+Apps that only need a router implement `Routes(chi.Router)`. Apps that need the
+server-owned database or auth services implement
+`RoutesWithServices(chi.Router, web.RuntimeServices)` instead. The explicit
+service value supplies the open database, user manager, auth store, and a
+session-safe `Login` function. Apps must not close server-owned services.
+
+The generated `/healthz` endpoint sits outside session, CSRF, and authentication
+middleware. Readiness probes therefore do not create cookies or database rows.
 Values redisplayed in forms are HTML-escaped. `Form` provides typed validation,
 stable field/non-field errors, and defensive copies.
 
