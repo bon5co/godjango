@@ -22,7 +22,7 @@ type Group struct {
 type User struct {
 	bun.BaseModel `bun:"table:auth_users,alias:u"`
 
-	ID           string     `bun:"id,pk,type:uuid"`
+	ID           string     `bun:"id,pk,type:uuid,nullzero,default:gen_random_uuid()"`
 	Username     string     `bun:"username,unique,notnull"`
 	Email        string     `bun:"email,notnull"`
 	PasswordHash string     `bun:"password_hash,notnull"`
