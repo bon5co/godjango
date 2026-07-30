@@ -192,6 +192,9 @@ func TestConcurrentPostgresRunnerRejectsSecondLock(t *testing.T) {
 	first := runnerFor(t, db, files, "concurrent")
 	second := runnerFor(t, db, files, "concurrent")
 	ctx := context.Background()
+	if _, err := first.Rollback(ctx, migrations.ConfirmRollback); err != nil {
+		t.Fatalf("pre-test Rollback() error = %v", err)
+	}
 
 	start := make(chan struct{})
 	var wait sync.WaitGroup
@@ -224,5 +227,8 @@ func TestConcurrentPostgresRunnerRejectsSecondLock(t *testing.T) {
 	}
 	if successes != 1 || lockFailures != 1 {
 		t.Fatalf("concurrent results: successes=%d lockFailures=%d", successes, lockFailures)
+	}
+	if _, err := first.Rollback(ctx, migrations.ConfirmRollback); err != nil {
+		t.Fatalf("cleanup Rollback() error = %v", err)
 	}
 }
