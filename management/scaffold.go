@@ -110,10 +110,21 @@ func main() {
 		"cmd/server/main.go": `package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/database"
+	"github.com/bon5co/godjango/web"
+	configuredproject "PROJECT_MODULE/internal/project"
 )
 
 func main() {
@@ -121,19 +132,107 @@ func main() {
 	if len(os.Args) > 1 {
 		address = os.Args[1]
 	}
-	server := &http.Server{
-		Addr: address,
-		Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-			response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			_, _ = fmt.Fprintln(response, "GoDjangGo")
-		}),
-		ReadHeaderTimeout: 5 * time.Second,
+	settings, err := configuredproject.LoadRuntimeSettings()
+	if err != nil {
+		exit(err)
+	}
+	db, err := database.Open(
+		context.Background(),
+		database.DefaultConfig(settings.DatabaseURL.Reveal()),
+	)
+	if err != nil {
+		exit(err)
+	}
+	defer db.Close()
+	configured, err := configuredproject.Configure()
+	if err != nil {
+		exit(err)
+	}
+	store := auth.NewBunStore(db)
+	manager := auth.NewManager(store, auth.NewPasswordHasher())
+	sessionStore, err := web.NewSessionStore(store)
+	if err != nil {
+		exit(err)
+	}
+	sessions, err := web.NewSessions(web.SessionConfig{
+		CookieName: "godjango_session",
+		Lifetime: 24 * time.Hour,
+		IdleTimeout: 30 * time.Minute,
+		Secure: !settings.Debug,
+	}, sessionStore)
+	if err != nil {
+		exit(err)
+	}
+	csrf, err := web.NewCSRF(web.CSRFConfig{
+		CookieName: "godjango_csrf",
+		Secure: !settings.Debug,
+	})
+	if err != nil {
+		exit(err)
+	}
+	sessionSecret := derive(settings.SessionSecret.Reveal(), "session")
+	resetSecret := derive(settings.SessionSecret.Reveal(), "password-reset")
+	router, err := web.NewRouter(web.RouterConfig{
+		Project: configured,
+		Middleware: []web.Middleware{
+			web.RequestID(),
+			web.Recover(),
+			web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !settings.Debug}),
+			web.BodyLimit(1 << 20),
+			sessions.Middleware,
+			csrf.Middleware,
+			web.Authentication(manager, sessionSecret),
+		},
+	})
+	if err != nil {
+		exit(err)
+	}
+	authHandlers, err := web.NewAuthHandlers(web.AuthHandlerConfig{
+		Backend: manager,
+		SessionSecret: sessionSecret,
+		ResetTokens: auth.ResetTokenGenerator{
+			Secret: resetSecret,
+			Timeout: 24 * time.Hour,
+		},
+		SendReset: func(context.Context, web.ResetMessage) error {
+			return errors.New("password reset delivery is not configured")
+		},
+	})
+	if err != nil {
+		exit(err)
+	}
+	authHandlers.Routes(router)
+	router.Get("/healthz", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	})
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		exit(err)
 	}
 	fmt.Fprintf(os.Stdout, "Starting development server at http://%s/\n", address)
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	server := web.Server{
+		Handler: router,
+		ShutdownTimeout: 10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout: 2 * time.Minute,
 	}
+	if err := server.Serve(ctx, listener); err != nil {
+		exit(err)
+	}
+}
+
+func derive(secret string, purpose string) []byte {
+	sum := sha256.Sum256([]byte(purpose + "\x00" + secret))
+	return sum[:]
+}
+
+func exit(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
 }
 `,
 		"internal/project/settings.go": fmt.Sprintf(`package project
@@ -150,15 +249,16 @@ func Configure() (*gdproject.Project, error) {
 `),
 		"internal/project/services.go": generatedServicesSource,
 	}
-	for name, content := range files {
-		if strings.HasSuffix(name, ".go") {
+	for fileName, content := range files {
+		content = strings.ReplaceAll(content, "PROJECT_MODULE", name)
+		if strings.HasSuffix(fileName, ".go") {
 			formatted, err := format.Source([]byte(content))
 			if err != nil {
-				return "", fmt.Errorf("format generated %s: %w", name, err)
+				return "", fmt.Errorf("format generated %s: %w", fileName, err)
 			}
 			content = string(formatted)
 		}
-		if err := writeNew(filepath.Join(root, filepath.FromSlash(name)), content); err != nil {
+		if err := writeNew(filepath.Join(root, filepath.FromSlash(fileName)), content); err != nil {
 			return "", err
 		}
 	}
@@ -229,7 +329,16 @@ func (*App) MigrationFS() fs.FS {
 	files := map[string]string{
 		"app.go":    appSource,
 		"models.go": "package " + name + "\n",
-		"routes.go": "package " + name + "\n",
+		"routes.go": `package ` + name + `
+
+import "github.com/go-chi/chi/v5"
+
+func (*App) Routes(router chi.Router) {
+	RegisterRoutes(router)
+}
+
+func RegisterRoutes(chi.Router) {}
+`,
 		"commands.go": `package ` + name + `
 
 import "github.com/bon5co/godjango/management"
@@ -387,10 +496,30 @@ import (
 	"github.com/bon5co/godjango/migrations"
 )
 
-type RuntimeSettings struct {
+type DatabaseSettings struct {
 	DatabaseURL env.Secret
+}
+
+type RuntimeSettings struct {
+	DatabaseURL  env.Secret
+	SessionSecret env.Secret
 	Debug       bool
 	Port        int
+}
+
+func LoadDatabaseSettings() (DatabaseSettings, error) {
+	root, err := management.DiscoverProject(".")
+	if err != nil {
+		return DatabaseSettings{}, err
+	}
+	var settings DatabaseSettings
+	schema := env.New(
+		env.Required("DATABASE_URL", &settings.DatabaseURL),
+	)
+	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
+		return DatabaseSettings{}, err
+	}
+	return settings, nil
 }
 
 func LoadRuntimeSettings() (RuntimeSettings, error) {
@@ -401,6 +530,7 @@ func LoadRuntimeSettings() (RuntimeSettings, error) {
 	var settings RuntimeSettings
 	schema := env.New(
 		env.Required("DATABASE_URL", &settings.DatabaseURL),
+		env.Required("SESSION_SECRET", &settings.SessionSecret),
 		env.Optional("DEBUG", &settings.Debug, false),
 		env.Optional("PORT", &settings.Port, 8000),
 	)
@@ -437,7 +567,7 @@ func Services() management.ProjectServices {
 			args []string,
 			streams management.Streams,
 		) error {
-			settings, err := LoadRuntimeSettings()
+			settings, err := LoadDatabaseSettings()
 			if err != nil {
 				return err
 			}
@@ -447,7 +577,7 @@ func Services() management.ProjectServices {
 }
 
 func openDatabase(ctx context.Context) (*database.DB, error) {
-	settings, err := LoadRuntimeSettings()
+	settings, err := LoadDatabaseSettings()
 	if err != nil {
 		return nil, err
 	}
