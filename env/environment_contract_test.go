@@ -1,7 +1,11 @@
 package env_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -153,6 +157,39 @@ func TestLoadIsAtomicAndRedactsSecretValues(t *testing.T) {
 	}
 	if config.Address != ":original" || config.Workers != 99 || config.SecretKey != "" {
 		t.Errorf("failed Load() partially mutated config: %+v", config)
+	}
+}
+
+func TestSecretRedactsFormattingJSONAndStructuredLogs(t *testing.T) {
+	secretValue := "never-print-this-secret"
+	secret := env.Secret(secretValue)
+
+	for _, rendered := range []string{
+		fmt.Sprintf("%v", secret),
+		fmt.Sprintf("%s", secret),
+		fmt.Sprintf("%q", secret),
+		fmt.Sprintf("%#v", secret),
+	} {
+		if strings.Contains(rendered, secretValue) {
+			t.Errorf("formatted secret leaked as %q", rendered)
+		}
+	}
+
+	encoded, err := json.Marshal(struct {
+		Secret env.Secret `json:"secret"`
+	}{Secret: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secretValue) {
+		t.Errorf("JSON secret leaked as %s", encoded)
+	}
+
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
+	logger.Info("configuration", "secret", secret)
+	if strings.Contains(logOutput.String(), secretValue) {
+		t.Errorf("structured log leaked secret as %s", logOutput.String())
 	}
 }
 
