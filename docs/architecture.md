@@ -13,7 +13,12 @@ The framework owns stable public APIs and composes mature libraries underneath:
 - HTMX for server-owned interactions
 - Alpine.js for transient browser-only state
 
-Automatic admin is outside scope. The complete user system is inside scope.
+Automatic admin is intentionally outside scope. In 2026, LLM-assisted code
+generation makes application-specific admin pages inexpensive, while a generic
+runtime admin would add substantial model-metadata, form-generation, and
+customization machinery. GoDjangGo invests in the reusable user, permission,
+validation, routing, and data primitives those generated pages need instead.
+The complete user system remains inside scope.
 
 ## User-system boundary
 
