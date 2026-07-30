@@ -1,6 +1,7 @@
 package env_test
 
 import (
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -57,6 +58,9 @@ func TestOptionalVariablesUseTypedDefaults(t *testing.T) {
 	if config.Timeout != 5*time.Second {
 		t.Errorf("Timeout = %s, want 5s", config.Timeout)
 	}
+	if config.PublicURL.String() != "https://example.com" {
+		t.Errorf("PublicURL = %q", config.PublicURL.String())
+	}
 	if config.DatabaseURL.String() != "postgres://localhost/godjango" {
 		t.Errorf("DatabaseURL = %q", config.DatabaseURL.String())
 	}
@@ -97,15 +101,19 @@ func TestMissingAndMalformedVariablesFailTogetherBeforeStart(t *testing.T) {
 	started := false
 
 	err := schema.Load(env.WithEnvironment(map[string]string{
-		"DEBUG":   "sometimes",
-		"WORKERS": "many",
-		"TIMEOUT": "eventually",
+		"DEBUG":      "sometimes",
+		"WORKERS":    "many",
+		"TIMEOUT":    "eventually",
+		"PUBLIC_URL": "relative",
 	}))
 	if err == nil {
 		started = true
 	}
 	if err == nil {
 		t.Fatal("Load() error = nil")
+	}
+	if !errors.Is(err, env.ErrInvalidEnvironment) {
+		t.Errorf("Load() error = %v, want ErrInvalidEnvironment", err)
 	}
 	if started {
 		t.Error("application work started after invalid environment")
@@ -116,6 +124,7 @@ func TestMissingAndMalformedVariablesFailTogetherBeforeStart(t *testing.T) {
 		"DEBUG",
 		"WORKERS",
 		"TIMEOUT",
+		"PUBLIC_URL",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("Load() error %q missing %s", err, name)
