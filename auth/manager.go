@@ -40,6 +40,12 @@ type UserStore interface {
 	UserByUsername(ctx context.Context, username string) (*User, error)
 }
 
+// PasswordUpdater is the optional persistence capability required by
+// changepassword. The default BunStore implements it.
+type PasswordUpdater interface {
+	UpdatePassword(ctx context.Context, user *User) error
+}
+
 // Manager owns user behavior over a replaceable persistence boundary.
 type Manager struct {
 	store  UserStore
@@ -85,6 +91,21 @@ func (m *Manager) CreateSuperuser(ctx context.Context, opts CreateUserOptions) (
 		return nil, ErrSuperuserFlag
 	}
 	return m.CreateUser(ctx, opts)
+}
+
+func (m *Manager) ChangePassword(ctx context.Context, username, password string) error {
+	user, err := m.store.UserByUsername(ctx, NormalizeUsername(username))
+	if err != nil {
+		return err
+	}
+	updater, ok := m.store.(PasswordUpdater)
+	if !ok {
+		return errors.New("godjango auth: user store does not support password updates")
+	}
+	if err := user.SetPassword(m.hasher, &password); err != nil {
+		return err
+	}
+	return updater.UpdatePassword(ctx, user)
 }
 
 func (m *Manager) Authenticate(ctx context.Context, username, password string) (*User, error) {

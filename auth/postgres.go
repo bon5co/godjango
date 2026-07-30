@@ -119,6 +119,25 @@ func (store *BunStore) UserByUsername(ctx context.Context, username string) (*Us
 	return user, nil
 }
 
+func (store *BunStore) UpdatePassword(ctx context.Context, user *User) error {
+	result, err := store.idb.NewUpdate().
+		Model(user).
+		Column("password_hash").
+		WherePK().
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 func (store *BunStore) CreateGroup(ctx context.Context, name string) error {
 	if name == "" {
 		return errors.New("godjango auth: group name is required")
