@@ -96,6 +96,12 @@ func selectMigrationApp(root, workingDirectory, requested string, options Projec
 		if _, exists := options.Project.App(requested); !exists {
 			return "", fmt.Errorf("godjango makemigration: app %q is not registered", requested)
 		}
+		if info, err := os.Stat(filepath.Join(root, "apps", requested)); err != nil || !info.IsDir() {
+			return "", fmt.Errorf(
+				"godjango makemigration: app %q does not own a project migrations directory",
+				requested,
+			)
+		}
 		return requested, nil
 	}
 	absolute, err := filepath.Abs(workingDirectory)
@@ -111,9 +117,14 @@ func selectMigrationApp(root, workingDirectory, requested string, options Projec
 			}
 		}
 	}
-	apps := options.Project.Apps()
-	if len(apps) == 1 {
-		return apps[0].Name(), nil
+	var projectApps []string
+	for _, app := range options.Project.Apps() {
+		if info, statErr := os.Stat(filepath.Join(root, "apps", app.Name())); statErr == nil && info.IsDir() {
+			projectApps = append(projectApps, app.Name())
+		}
+	}
+	if len(projectApps) == 1 {
+		return projectApps[0], nil
 	}
 	return "", errors.New("godjango makemigration: select a registered app with --app")
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -115,9 +116,16 @@ func RunProjectProgram(
 	if packagePath == "" {
 		return errors.New("godjango: project package path is required")
 	}
-	if packagePath[0] != '.' {
-		packagePath = "." + string(filepath.Separator) + filepath.Clean(packagePath)
+	cleanPackage := filepath.Clean(packagePath)
+	if filepath.IsAbs(cleanPackage) ||
+		cleanPackage == ".." ||
+		strings.HasPrefix(cleanPackage, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("godjango: project package %q must stay inside the project", packagePath)
 	}
+	packagePath = "." + string(filepath.Separator) + strings.TrimPrefix(
+		cleanPackage,
+		"."+string(filepath.Separator),
+	)
 	build := exec.Command("go", "build", "-buildvcs=false", "-o", programPath, packagePath)
 	build.Dir = root
 	build.Env = os.Environ()

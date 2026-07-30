@@ -61,7 +61,11 @@ func (manager *fakeUserManager) ChangePassword(
 
 func TestProjectMigrationCommandsAreLazyAndAlwaysCleanUp(t *testing.T) {
 	root := newFixtureProject(t, "example.com/bookshelf", map[string]string{})
-	configured, err := gdproject.New(commandSettings{}, commandApp("library"))
+	configured, err := gdproject.New(
+		commandSettings{},
+		commandApp("auth"),
+		commandApp("library"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +138,7 @@ func TestMakeMigrationCreatesExplicitPairForRegisteredApp(t *testing.T) {
 	var stderr bytes.Buffer
 	code := ExecuteProject(
 		context.Background(),
-		[]string{"makemigration", "create_books", "--app", "library"},
+		[]string{"makemigration", "create_books"},
 		ProjectOptions{
 			Project:          configured,
 			WorkingDirectory: root,
