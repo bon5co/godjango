@@ -27,3 +27,6 @@ test-first delivery slices.
 
 Application configuration uses explicit, typed environment declarations. See
 [environment declarations](docs/environment.md).
+
+Projects use validated settings and an explicit ordered app registry. See
+[project settings and apps](docs/projects.md).
