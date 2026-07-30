@@ -31,8 +31,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - name: Deliberate red proof — static
-        run: exit 1
       - run: mkdir -p test-results/logs
       - name: Formatting
         run: scripts/ci.sh format 2>&1 | tee test-results/logs/format.log
@@ -63,8 +61,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - name: Deliberate red proof — race
-        run: exit 1
       - run: mkdir -p test-results/logs
       - name: Race-enabled unit tests
         run: scripts/ci.sh race 2>&1 | tee test-results/logs/race.log
@@ -87,8 +83,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - name: Deliberate red proof — generated project
-        run: exit 1
       - run: mkdir -p test-results/logs
       - name: Generated-project smoke tests
         run: scripts/ci.sh generated 2>&1 | tee test-results/logs/generated.log
@@ -127,8 +121,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-      - name: Deliberate red proof — PostgreSQL integration
-        run: exit 1
       - run: mkdir -p test-results/logs
       - name: PostgreSQL integration tests
         run: scripts/ci.sh integration 2>&1 | tee test-results/logs/integration.log
@@ -172,8 +164,6 @@ jobs:
         uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
         with:
           chrome-version: 151.0.7922.71
-      - name: Deliberate red proof — browser E2E
-        run: exit 1
       - run: mkdir -p test-results/logs
       - name: Headed browser E2E
         env:
