@@ -20,6 +20,7 @@ const (
 type GlobalOptions struct {
 	Version          string
 	WorkingDirectory string
+	FrameworkReplace string
 }
 
 // ExecuteGlobal runs the installed godjango command. Framework-global
@@ -50,8 +51,21 @@ func ExecuteGlobal(ctx context.Context, args []string, options GlobalOptions, st
 		}
 	}
 	if args[0] == "startproject" {
-		_, _ = fmt.Fprintln(streams.Err, "godjango: startproject is not implemented")
-		return ExitFailure
+		if len(args) != 2 {
+			_, _ = fmt.Fprintln(streams.Err, "usage: godjango startproject <name>")
+			return ExitUsage
+		}
+		scaffolder := Scaffolder{
+			FrameworkVersion: options.Version,
+			FrameworkReplace: options.FrameworkReplace,
+		}
+		root, err := scaffolder.StartProject(ctx, workingDirectory, args[1])
+		if err != nil {
+			_, _ = fmt.Fprintln(streams.Err, err)
+			return ExitFailure
+		}
+		_, _ = fmt.Fprintf(streams.Out, "Created project %s\n", root)
+		return ExitOK
 	}
 
 	root, err := DiscoverProject(workingDirectory)
