@@ -1,6 +1,7 @@
 package management
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -128,6 +129,73 @@ func TestStartAppCreatesBuildableAppAndDeterministicRegistry(t *testing.T) {
 	}
 	runGo(t, root, "test", "./...")
 	runGo(t, root, "vet", "./...")
+}
+
+func TestGeneratedProjectRunsUnitTestsThroughGlobalCLI(t *testing.T) {
+	parent := t.TempDir()
+	frameworkRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffolder := Scaffolder{
+		FrameworkVersion: "v0.0.0",
+		FrameworkReplace: frameworkRoot,
+	}
+	root, err := scaffolder.StartProject(context.Background(), parent, "bookshelf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffolder.StartApp(root, "library"); err != nil {
+		t.Fatal(err)
+	}
+	testPath := filepath.Join(root, "apps", "library", "library_test.go")
+	if err := os.WriteFile(testPath, []byte(`package library
+
+import "testing"
+
+func TestGeneratedProject(t *testing.T) {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	nested := filepath.Join(root, "apps", "library")
+	code := ExecuteGlobal(
+		context.Background(),
+		[]string{"test", "--", "-count=1", "./apps/library/..."},
+		GlobalOptions{WorkingDirectory: nested},
+		Streams{Out: &stdout, Err: &stderr},
+	)
+	if code != ExitOK {
+		t.Fatalf("exit code = %d; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "bookshelf/apps/library") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+
+	if err := os.WriteFile(testPath, []byte(`package library
+
+import "testing"
+
+func TestGeneratedProject(t *testing.T) { t.Fatal("generated failure") }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = ExecuteGlobal(
+		context.Background(),
+		[]string{"test", "--", "-count=1", "./apps/library/..."},
+		GlobalOptions{WorkingDirectory: root},
+		Streams{Out: &stdout, Err: &stderr},
+	)
+	if code != ExitFailure {
+		t.Fatalf("failure exit code = %d, want %d; stdout=%q stderr=%q", code, ExitFailure, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "generated failure") {
+		t.Fatalf("failure stdout = %q", stdout.String())
+	}
 }
 
 func runGo(t *testing.T, directory string, args ...string) {

@@ -67,6 +67,11 @@ func TestUnitTestArguments(t *testing.T) {
 			args: []string{"./apps/books/...", "--", "-run", "TestBook"},
 			want: []string{"test", "./apps/books/...", "-run", "TestBook"},
 		},
+		{
+			name: "only management separator removed",
+			args: []string{"--", "-args", "--", "fixture-value"},
+			want: []string{"test", "-args", "--", "fixture-value"},
+		},
 	}
 
 	for _, test := range tests {

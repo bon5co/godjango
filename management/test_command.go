@@ -77,8 +77,10 @@ func UnitTestArguments(args []string) []string {
 	}
 	result := make([]string, 1, len(args)+1)
 	result[0] = "test"
+	removedSeparator := false
 	for _, arg := range args {
-		if arg == "--" {
+		if arg == "--" && !removedSeparator {
+			removedSeparator = true
 			continue
 		}
 		result = append(result, arg)
