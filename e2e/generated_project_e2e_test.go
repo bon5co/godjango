@@ -511,9 +511,17 @@ func startServer(
 
 func startBrowser(t *testing.T) (context.Context, func()) {
 	t.Helper()
-	chromium, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Fatal("headed Chromium is required")
+	chromium := os.Getenv("GODJANGO_CHROME_PATH")
+	if chromium == "" {
+		for _, candidate := range []string{"chromium", "chrome", "google-chrome"} {
+			if resolved, err := exec.LookPath(candidate); err == nil {
+				chromium = resolved
+				break
+			}
+		}
+	}
+	if chromium == "" {
+		t.Fatal("headed Chromium or Chrome is required")
 	}
 	profile, err := os.MkdirTemp("", "godjango-e2e-chromium-*")
 	if err != nil {
@@ -529,6 +537,9 @@ func startBrowser(t *testing.T) (context.Context, func()) {
 	)
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		options = append(options, chromedp.Flag("ozone-platform", "wayland"))
+	}
+	if os.Getenv("GODJANGO_CHROME_NO_SANDBOX") == "true" {
+		options = append(options, chromedp.Flag("no-sandbox", true))
 	}
 	allocator, stopAllocator := chromedp.NewExecAllocator(context.Background(), options...)
 	browser, stopBrowser := chromedp.NewContext(allocator)
