@@ -24,24 +24,17 @@ idempotent so converging shutdown paths cannot close the pool twice.
 | Maximum idle connections | 10 |
 | Maximum idle time | 30 seconds |
 | Maximum lifetime | 30 minutes |
-| PostgreSQL ping timeout | 5 seconds |
+| Startup ping timeout | 5 seconds |
 
 These are framework defaults, not hidden constants: copy `DefaultConfig` and
 override fields for the deployment.
 
-The 30-second idle limit bounds resource retention. It is not the recovery
-mechanism for a database restart: `database/sql` enforces idle expiry on a
-background cadence, so a dead connection can still be checked out first.
-
-GoDjangGo installs pgdriver's reset-session hook to validate reused connections
-before an application operation begins. It performs a `PingTimeout`-bounded
-PostgreSQL ping on every reused checkout. If the ping fails, the hook returns
-`driver.ErrBadConn`, so `database/sql` transparently opens a replacement before
-sending the application query.
-
-This portable check behaves the same for plain TCP, `sslmode=require`, and
-`sslmode=verify-full`. It adds one SQL round trip per reused checkout, so include
-that cost in deployment capacity plans.
+The 30-second idle limit deliberately addresses a failure observed on Railway.
+Its internal network can reap idle TCP connections while pgdriver surfaces a
+raw EOF rather than `driver.ErrBadConn`. In that case `database/sql` does not
+retry on a fresh connection and the request fails. Recycling idle connections
+before the network reaper reaches them prevents the stale socket from entering
+a query.
 
 Do not add blanket query retries. Retrying writes or transactions after an
 ambiguous network failure can duplicate side effects.
@@ -71,6 +64,6 @@ GODJANGO_TEST_DATABASE_URL=postgres://... \
 	go test -tags=integration ./database
 ```
 
-The regression suite terminates an actual pooled PostgreSQL backend and verifies
-that the first query immediately afterward uses a healthy replacement
-connection.
+The regression suite terminates an actual pooled PostgreSQL backend, waits for
+a short configured idle policy to recycle it, and verifies that the next query
+uses a healthy replacement connection.

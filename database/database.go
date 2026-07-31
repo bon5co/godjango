@@ -4,7 +4,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sync"
@@ -54,10 +53,7 @@ func Open(ctx context.Context, config Config) (*DB, error) {
 		return nil, err
 	}
 
-	sqlDB := pgdriver.NewConnector(
-		pgdriver.WithDSN(config.DSN),
-		pgdriver.WithResetSessionFunc(discardBrokenSession(config.PingTimeout)),
-	)
+	sqlDB := pgdriver.NewConnector(pgdriver.WithDSN(config.DSN))
 	bunDB := bun.NewDB(
 		sql.OpenDB(sqlDB),
 		pgdialect.New(),
@@ -74,20 +70,6 @@ func Open(ctx context.Context, config Config) (*DB, error) {
 		return nil, fmt.Errorf("%w: %w", ErrConnect, err)
 	}
 	return &DB{bun: bunDB}, nil
-}
-
-// discardBrokenSession validates an idle connection before database/sql gives
-// it to a new operation. Returning driver.ErrBadConn here makes database/sql
-// discard and replace the connection before any application query is sent.
-func discardBrokenSession(timeout time.Duration) func(context.Context, *pgdriver.Conn) error {
-	return func(ctx context.Context, conn *pgdriver.Conn) error {
-		pingCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		if err := conn.Ping(pingCtx); err != nil {
-			return driver.ErrBadConn
-		}
-		return nil
-	}
 }
 
 func (db *DB) Bun() *bun.DB {
