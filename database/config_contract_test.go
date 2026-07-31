@@ -10,7 +10,7 @@ import (
 	"github.com/bon5co/godjango/database"
 )
 
-func TestDefaultConfigPreventsStaleIdleConnections(t *testing.T) {
+func TestDefaultConfigBoundsPoolAndConnectionValidation(t *testing.T) {
 	config := database.DefaultConfig("postgres://example/database")
 
 	if config.MaxOpenConns != 25 {

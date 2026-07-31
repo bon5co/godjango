@@ -87,13 +87,15 @@ func TestRunInTxCommitsAndRollsBackRows(t *testing.T) {
 	}
 }
 
-func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
+func TestFirstQueryRecoversAfterPostgresTerminatesPooledBackend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	dsn := integrationDSN(t)
 	config := database.DefaultConfig(dsn)
 	config.MaxOpenConns = 1
 	config.MaxIdleConns = 1
-	config.ConnMaxIdleTime = 50 * time.Millisecond
-	db, err := database.Open(context.Background(), config)
+	db, err := database.Open(ctx, config)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -102,13 +104,12 @@ func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
 	adminConfig := database.DefaultConfig(dsn)
 	adminConfig.MaxOpenConns = 1
 	adminConfig.MaxIdleConns = 1
-	admin, err := database.Open(context.Background(), adminConfig)
+	admin, err := database.Open(ctx, adminConfig)
 	if err != nil {
 		t.Fatalf("admin Open() error = %v", err)
 	}
 	defer admin.Close()
 
-	ctx := context.Background()
 	var originalPID int
 	if err := db.Bun().NewRaw("SELECT pg_backend_pid()").Scan(ctx, &originalPID); err != nil {
 		t.Fatal(err)
@@ -121,12 +122,27 @@ func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
 		t.Fatalf("pg_terminate_backend(%d) = false", originalPID)
 	}
 
-	// database/sql enforces a minimum connection-cleaner cadence. Wait beyond
-	// that cadence so the 50ms idle policy has been applied before reuse.
-	time.Sleep(1500 * time.Millisecond)
+	for {
+		var active bool
+		if err := admin.Bun().NewRaw(
+			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ?)",
+			originalPID,
+		).Scan(ctx, &active); err != nil {
+			t.Fatalf("check terminated backend %d: %v", originalPID, err)
+		}
+		if !active {
+			break
+		}
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatalf("wait for backend %d termination: %v", originalPID, ctx.Err())
+		}
+	}
+
 	var replacementPID int
 	if err := db.Bun().NewRaw("SELECT pg_backend_pid()").Scan(ctx, &replacementPID); err != nil {
-		t.Fatalf("query after idle recycling error = %v", err)
+		t.Fatalf("first query after backend termination error = %v", err)
 	}
 	if replacementPID == originalPID {
 		t.Fatalf("backend PID remained %d after termination", replacementPID)
