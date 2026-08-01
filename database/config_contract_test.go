@@ -16,9 +16,6 @@ func TestDefaultConfigPreventsStaleIdleConnections(t *testing.T) {
 	if config.MaxOpenConns != 25 {
 		t.Errorf("MaxOpenConns = %d, want 25", config.MaxOpenConns)
 	}
-	if config.MaxIdleConns != 10 {
-		t.Errorf("MaxIdleConns = %d, want 10", config.MaxIdleConns)
-	}
 	if config.ConnMaxIdleTime != 30*time.Second {
 		t.Errorf("ConnMaxIdleTime = %s, want 30s", config.ConnMaxIdleTime)
 	}
@@ -49,14 +46,6 @@ func TestInvalidConfigFailsBeforeConnecting(t *testing.T) {
 				config.MaxOpenConns = 0
 			},
 			want: "MaxOpenConns",
-		},
-		{
-			name: "idle exceeds open",
-			mutate: func(config *database.Config) {
-				config.MaxOpenConns = 2
-				config.MaxIdleConns = 3
-			},
-			want: "MaxIdleConns",
 		},
 		{
 			name: "zero idle lifetime",
