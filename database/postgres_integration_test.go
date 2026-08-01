@@ -25,14 +25,13 @@ func integrationDSN(t *testing.T) string {
 func TestPostgresPoolConfigurationAndCloseOwnership(t *testing.T) {
 	config := database.DefaultConfig(integrationDSN(t))
 	config.MaxOpenConns = 3
-	config.MaxIdleConns = 2
 
 	db, err := database.Open(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	if got := db.Bun().DB.Stats().MaxOpenConnections; got != 3 {
-		t.Errorf("MaxOpenConnections = %d, want 3", got)
+	if got := db.Pool().Config().MaxConns; got != 3 {
+		t.Errorf("MaxConns = %d, want 3", got)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -45,7 +44,6 @@ func TestPostgresPoolConfigurationAndCloseOwnership(t *testing.T) {
 func TestRunInTxCommitsAndRollsBackRows(t *testing.T) {
 	config := database.DefaultConfig(integrationDSN(t))
 	config.MaxOpenConns = 1
-	config.MaxIdleConns = 1
 	db, err := database.Open(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -87,12 +85,10 @@ func TestRunInTxCommitsAndRollsBackRows(t *testing.T) {
 	}
 }
 
-func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
+func TestPGXPoolReplacesKilledConnectionAfterOneSecondIdle(t *testing.T) {
 	dsn := integrationDSN(t)
 	config := database.DefaultConfig(dsn)
 	config.MaxOpenConns = 1
-	config.MaxIdleConns = 1
-	config.ConnMaxIdleTime = 50 * time.Millisecond
 	db, err := database.Open(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -101,7 +97,6 @@ func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
 
 	adminConfig := database.DefaultConfig(dsn)
 	adminConfig.MaxOpenConns = 1
-	adminConfig.MaxIdleConns = 1
 	admin, err := database.Open(context.Background(), adminConfig)
 	if err != nil {
 		t.Fatalf("admin Open() error = %v", err)
@@ -121,9 +116,10 @@ func TestExpiredKilledIdleConnectionIsReplaced(t *testing.T) {
 		t.Fatalf("pg_terminate_backend(%d) = false", originalPID)
 	}
 
-	// database/sql enforces a minimum connection-cleaner cadence. Wait beyond
-	// that cadence so the 50ms idle policy has been applied before reuse.
-	time.Sleep(1500 * time.Millisecond)
+	// pgxpool's built-in ShouldPing checks connections idle for more than one
+	// second before acquisition. Production database sleep/wake periods exceed
+	// this threshold.
+	time.Sleep(1100 * time.Millisecond)
 	var replacementPID int
 	if err := db.Bun().NewRaw("SELECT pg_backend_pid()").Scan(ctx, &replacementPID); err != nil {
 		t.Fatalf("query after idle recycling error = %v", err)
