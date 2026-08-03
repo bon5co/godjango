@@ -72,10 +72,35 @@ close their pool before returning. Generated runtime settings declare
 optional defaults; a missing required value fails before the server listens or
 a database command begins.
 
-Each app's `commands.go` returns `[]management.Command`. The generated
-`internal/project/commands.go` registry combines those functions
-deterministically, so custom commands work through both `cmd/manage` and the
-global `godjango` layer without runtime plugins.
+Each app's `commands.go` takes the project's `management.ProjectServices` and
+returns `[]management.Command`. The generated `internal/project/commands.go`
+registry passes `Services()` in and combines those functions deterministically,
+so custom commands work through both `cmd/manage` and the global `godjango`
+layer without runtime plugins.
+
+```go
+func Commands(services management.ProjectServices) []management.Command {
+	return []management.Command{{
+		Name:    "importcatalog",
+		Summary: "Load the supplier catalog",
+		Run: func(ctx context.Context, args []string, streams management.Streams) error {
+			db, close, err := services.Database(ctx)
+			if err != nil {
+				return err
+			}
+			defer close()
+			// ... query with Bun
+			return nil
+		},
+	}}
+}
+```
+
+`services.Database` opens the same validated, bounded pool the built-in
+commands use. It is lazy like the rest — nothing connects until a command calls
+it — and the returned closer must run before the command returns. Without it
+every project would re-implement settings loading and pool construction just to
+query its own tables.
 
 ## Intentional differences from Django
 

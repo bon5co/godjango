@@ -353,7 +353,13 @@ func RegisterRoutes(chi.Router) {}
 
 import "github.com/bon5co/godjango/management"
 
-func Commands() []management.Command { return nil }
+// Commands returns this app's management commands. The project's services are
+// passed in so a command can open the database the same way the built-in
+// commands do, instead of re-reading settings and building its own pool.
+func Commands(services management.ProjectServices) []management.Command {
+	_ = services
+	return nil
+}
 `,
 		"migrations/README.md": "# Explicit paired SQL migrations for this app.\n",
 	}
@@ -389,7 +395,7 @@ func writeAppRegistry(root, module string, apps []string) error {
 	for _, app := range apps {
 		_, _ = fmt.Fprintf(&imports, "\t%q\n", module+"/apps/"+app)
 		_, _ = fmt.Fprintf(&values, "\t\t%s.New(),\n", app)
-		_, _ = fmt.Fprintf(&commands, "\tregistered = append(registered, %s.Commands()...)\n", app)
+		_, _ = fmt.Fprintf(&commands, "\tregistered = append(registered, %s.Commands(services)...)\n", app)
 	}
 	source := fmt.Sprintf(`package project
 
@@ -413,6 +419,12 @@ func Apps() []gdproject.App {
 		return err
 	}
 
+	// Only bind services when an app actually consumes them; an unused local
+	// would not compile in a project with no apps yet.
+	commandPreamble := ""
+	if len(apps) > 0 {
+		commandPreamble = "\tservices := Services()\n"
+	}
 	commandSource := fmt.Sprintf(`package project
 
 import (
@@ -420,10 +432,10 @@ import (
 %s)
 
 func Commands() []management.Command {
-	var registered []management.Command
+%s	var registered []management.Command
 %s	return registered
 }
-`, imports.String(), commands.String())
+`, imports.String(), commandPreamble, commands.String())
 	formattedCommands, err := format.Source([]byte(commandSource))
 	if err != nil {
 		return err
@@ -554,6 +566,15 @@ func Services() management.ProjectServices {
 	return management.ProjectServices{
 		Migrations: openMigrations,
 		Users: openUsers,
+		Database: func(
+			ctx context.Context,
+		) (*database.DB, func() error, error) {
+			db, err := openDatabase(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return db, db.Close, nil
+		},
 		RunServer: func(
 			ctx context.Context,
 			args []string,

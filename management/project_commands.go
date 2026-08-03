@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/database"
 	"github.com/bon5co/godjango/migrations"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -31,6 +32,13 @@ type ProjectServices struct {
 	Users         func(context.Context) (UserManager, func() error, error)
 	RunServer     func(context.Context, []string, Streams) error
 	DatabaseShell func(context.Context, []string, Streams) error
+	// Database opens the project pool for custom commands. Built-in commands
+	// reach the database through the managers above; without this an
+	// application command has no supported way to query its own tables, and
+	// every project re-implements settings loading and pool construction.
+	// Lazy, like the rest: nothing connects until a command calls it, and the
+	// returned closer must run before the command returns.
+	Database func(context.Context) (*database.DB, func() error, error)
 }
 
 func addProjectServiceCommands(
