@@ -11,8 +11,14 @@ type CachePolicy string
 const NoStore CachePolicy = "no-store"
 
 type RenderOptions struct {
-	Title       string
-	Content     templ.Component
+	Title   string
+	Content templ.Component
+	// Stylesheets are same-origin URLs linked into the document head, for an
+	// application that ships its own CSS. They must be served by the
+	// application itself: the default Content-Security-Policy is
+	// default-src 'self', which permits this and forbids both inline styles and
+	// third-party hosts. Ignored on an HTMX fragment response, which has no head.
+	Stylesheets []string
 	CSRFToken   string
 	PushURL     string
 	CachePolicy CachePolicy
