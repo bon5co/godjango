@@ -240,11 +240,14 @@ import (
 	"github.com/bon5co/godjango/management"
 )
 
-func Commands() []management.Command {
+func Commands(services management.ProjectServices) []management.Command {
 	return []management.Command{{
 		Name: "hello",
 		Summary: "Run a fixture command",
 		Run: func(_ context.Context, args []string, streams management.Streams) error {
+			if services.Database == nil {
+				return fmt.Errorf("database service was not passed to the app")
+			}
 			fmt.Fprintf(streams.Out, "hello %s\n", args[0])
 			return nil
 		},
