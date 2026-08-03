@@ -57,3 +57,22 @@ can build projects without installing the templ generator. During development:
 ```bash
 go run github.com/a-h/templ/cmd/templ@v0.3.1020 generate
 ```
+
+## Application stylesheets
+
+`Layout` owns the document head and the default policy is `default-src 'self'`,
+so an inline `<style>` inside an application component is dropped by the browser
+with no error and no visible cause. Applications ship CSS by serving it
+themselves and linking it:
+
+```go
+err := view.Render(response, request, view.RenderOptions{
+    Title:       "Shelf",
+    Content:     shelf.Page(rows),
+    Stylesheets: []string{"/static/stillworks/app.css"},
+})
+```
+
+The URLs must be same-origin, which is what the policy already permits; a CDN
+host would need the policy widened and is not supported. `Stylesheets` is
+ignored for an HTMX fragment response, which has no head to link into.

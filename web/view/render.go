@@ -21,7 +21,7 @@ func Render(response http.ResponseWriter, request *http.Request, options RenderO
 			response.Header().Set("HX-Push-Url", options.PushURL)
 		}
 	} else {
-		component = Layout(options.Title, options.CSRFToken, component)
+		component = Layout(options.Title, options.CSRFToken, options.Stylesheets, component)
 	}
 	if options.Status != 0 {
 		response.WriteHeader(options.Status)

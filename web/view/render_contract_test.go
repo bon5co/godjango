@@ -169,3 +169,42 @@ func TestHTMXDetectionRequiresExactTrue(t *testing.T) {
 		}
 	}
 }
+
+// Applications cannot reach into the document head, and the default
+// Content-Security-Policy is default-src 'self', so an inline <style> inside an
+// application component is dropped by the browser without any error. Linking a
+// same-origin stylesheet is the supported route, and it must survive into the
+// full-page response while staying out of an HTMX fragment.
+func TestRenderLinksApplicationStylesheetsIntoTheHead(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	options := RenderOptions{
+		Title:       "Shelf",
+		Content:     content,
+		Stylesheets: []string{"/static/stillworks/app.css"},
+	}
+
+	full := httptest.NewRecorder()
+	if err := Render(full, httptest.NewRequest(http.MethodGet, "/llm/", nil), options); err != nil {
+		t.Fatalf("render full page: %v", err)
+	}
+	body := full.Body.String()
+	if !strings.Contains(body, `<link rel="stylesheet" href="/static/stillworks/app.css">`) {
+		t.Fatalf("application stylesheet missing from head: %s", body)
+	}
+	if strings.Index(body, "/static/stillworks/app.css") > strings.Index(body, "<body") {
+		t.Fatal("application stylesheet must be linked in the head, not the body")
+	}
+
+	fragment := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Header.Set("HX-Request", "true")
+	if err := Render(fragment, request, options); err != nil {
+		t.Fatalf("render fragment: %v", err)
+	}
+	if strings.Contains(fragment.Body.String(), "app.css") {
+		t.Fatal("an HTMX fragment has no head and must not carry stylesheet links")
+	}
+}
