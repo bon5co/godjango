@@ -98,6 +98,51 @@ func TestLoginRejectsUnsafeRedirectAndRotatesSession(t *testing.T) {
 	}
 }
 
+// An HTTPS site must keep refusing a plaintext ?next=. Reading request.TLS for
+// that decision dropped the rule on every deployment behind a TLS-terminating
+// proxy and kept it only where nobody is attacked -- development.
+func TestLoginKeepsTheHTTPSRedirectRuleBehindATerminatingProxy(t *testing.T) {
+	fixture := newAuthHTTPFixture(t, TrustedProxy(TrustedProxyConfig{TrustAnyPeer: true}))
+	fixture.headers.Set("X-Forwarded-Proto", "https")
+	host := mustURL(t, fixture.server.URL).Host
+	fixture.headers.Set("Origin", "https://"+host)
+
+	for _, test := range []struct {
+		name string
+		next string
+		want string
+	}{
+		{
+			name: "plaintext target on the same host is a downgrade",
+			next: "http://" + host + "/dashboard",
+			want: "/",
+		},
+		{
+			name: "the same target over https is allowed",
+			next: "https://" + host + "/dashboard",
+			want: "https://" + host + "/dashboard",
+		},
+		{name: "a relative target is unaffected", next: "/dashboard", want: "/dashboard"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			token := fixture.csrfToken(t, "/accounts/login/")
+			response := fixture.postForm(t, "/accounts/login/", url.Values{
+				"username":   {"alice"},
+				"password":   {"correct"},
+				"next":       {test.next},
+				"csrf_token": {token},
+			})
+			response.Body.Close()
+			if response.StatusCode != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303", response.StatusCode)
+			}
+			if location := response.Header.Get("Location"); location != test.want {
+				t.Fatalf("location = %q, want %q", location, test.want)
+			}
+		})
+	}
+}
+
 func TestSuccessfulHTMXLoginUsesBrowserRedirectHeader(t *testing.T) {
 	fixture := newAuthHTTPFixture(t)
 	token := fixture.csrfToken(t, "/accounts/login/")
@@ -322,9 +367,15 @@ type authHTTPFixture struct {
 	server  *httptest.Server
 	client  *http.Client
 	backend *fakeAuthBackend
+	// headers ride on every fixture request, so a test can reproduce what a
+	// reverse proxy adds in front of the application.
+	headers http.Header
 }
 
-func newAuthHTTPFixture(t *testing.T) *authHTTPFixture {
+// newAuthHTTPFixture serves over plain HTTP, which is also what a deployment
+// behind a TLS-terminating proxy looks like from inside the process. Extra
+// middleware runs outermost, before request IDs and sessions.
+func newAuthHTTPFixture(t *testing.T, outer ...Middleware) *authHTTPFixture {
 	t.Helper()
 	user := &auth.User{
 		ID:           "user-1",
@@ -369,6 +420,9 @@ func newAuthHTTPFixture(t *testing.T) *authHTTPFixture {
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
+	for _, middleware := range outer {
+		router.Use(middleware)
+	}
 	router.Use(RequestID())
 	router.Use(sessions.Middleware)
 	router.Use(csrf.Middleware)
@@ -392,16 +446,35 @@ func newAuthHTTPFixture(t *testing.T) *authHTTPFixture {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &authHTTPFixture{t: t, server: server, client: client, backend: backend}
+	return &authHTTPFixture{
+		t:       t,
+		server:  server,
+		client:  client,
+		backend: backend,
+		headers: http.Header{},
+	}
 }
 
 func (fixture *authHTTPFixture) get(t *testing.T, path string) *http.Response {
 	t.Helper()
-	response, err := fixture.client.Get(fixture.server.URL + path)
+	request, err := http.NewRequest(http.MethodGet, fixture.server.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.applyHeaders(request)
+	response, err := fixture.client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return response
+}
+
+func (fixture *authHTTPFixture) applyHeaders(request *http.Request) {
+	for name, values := range fixture.headers {
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+	}
 }
 
 func (fixture *authHTTPFixture) csrfToken(t *testing.T, path string) string {
@@ -440,6 +513,7 @@ func (fixture *authHTTPFixture) postForm(
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	fixture.applyHeaders(request)
 	response, err := fixture.client.Do(request)
 	if err != nil {
 		t.Fatal(err)

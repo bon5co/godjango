@@ -197,11 +197,15 @@ func (handlers *AuthHandlers) login(response http.ResponseWriter, request *http.
 		return
 	}
 	target := form.Value("next")
+	// An HTTPS site must keep refusing a plaintext ?next=, and behind a
+	// TLS-terminating proxy request.TLS is nil on exactly those sites -- reading
+	// it here would quietly drop the requirement in production and keep it only
+	// in development. RequestIsHTTPS answers for the client's connection.
 	if !IsSafeRedirect(
 		request,
 		target,
 		handlers.config.AllowedHosts,
-		request.TLS != nil,
+		RequestIsHTTPS(request),
 	) {
 		target = "/"
 	}

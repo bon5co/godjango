@@ -11,6 +11,7 @@ complete typed runtime environment before opening a listener:
 - `SESSION_SECRET`: required secret
 - `DEBUG`: optional, default `false`
 - `PORT`: optional, default `8000`
+- `TRUST_PROXY_HEADERS`: optional, default `false`
 
 Database-only management commands load only `DATABASE_URL`; they do not require
 HTTP settings. `godjango test` loads neither.
@@ -21,19 +22,48 @@ Generated servers declare middleware in source, in this order:
 
 | Order | Middleware | Responsibility |
 | --- | --- | --- |
-| 1 | request ID | Preserve a valid edge ID or generate 128 random bits |
-| 2 | recovery | Convert panics to a structured error without leaking values |
-| 3 | secure headers | CSP, HSTS in HTTPS mode, frame/content/referrer policy |
-| 4 | body limit | Reject declared and streaming bodies over 1 MiB |
-| 5 | sessions | Load/save an opaque SCS token through PostgreSQL |
-| 6 | CSRF | Masked synchronizer token, same-origin validation, secure cookie |
-| 7 | authentication | Load and validate the session user and auth hash |
+| 1 | trusted proxy | Resolve the client's real address and scheme, or refuse to |
+| 2 | request ID | Preserve a valid edge ID or generate 128 random bits |
+| 3 | recovery | Convert panics to a structured error without leaking values |
+| 4 | secure headers | CSP, HSTS in HTTPS mode, frame/content/referrer policy |
+| 5 | body limit | Reject declared and streaming bodies over 1 MiB |
+| 6 | sessions | Load/save an opaque SCS token through PostgreSQL |
+| 7 | CSRF | Masked synchronizer token, same-origin validation, secure cookie |
+| 8 | authentication | Load and validate the session user and auth hash |
 
-`TrustedProxy` is available but generated projects do not trust any network by
-default. Configure exact `netip.Prefix` values for infrastructure-controlled
-proxies. It walks `X-Forwarded-For` from the trusted edge toward the client and
-stops at the first untrusted address, preventing a client-prepended value from
-winning.
+## Reverse proxies
+
+A reverse proxy rewrites the two request facts the security middleware depends
+on. The address `net/http` accepts the connection from is the proxy's, and the
+scheme it was reached by is plain HTTP whenever the proxy terminated TLS —
+`request.TLS` is nil on exactly the deployments that are served over HTTPS. The
+proxy restates the originals in `X-Forwarded-For` and `X-Forwarded-Proto`, and
+`TrustedProxy` is the single place where an application says whether those
+restatements can be believed. Downstream code reads the answer through
+`RemoteIP` and `RequestScheme`/`RequestIsHTTPS`, never through the headers.
+
+Trust is off by default, so an unconfigured application believes nothing and
+reports the connection it actually accepted. Declare it one of two ways:
+
+- `Networks`: exact `netip.Prefix` values for infrastructure-controlled proxies.
+  `X-Forwarded-For` is walked from the trusted edge toward the client and stops
+  at the first untrusted address, so a client-prepended value never wins.
+- `TrustAnyPeer`: for platforms that place the application behind their own
+  proxy on a private network without promising a fixed proxy address — Dokploy,
+  Railway, Fly — where the guarantee is that nothing else can reach the port.
+  Generated projects wire this to `TRUST_PROXY_HEADERS`.
+
+Getting it wrong fails in one direction or the other. Left off behind a
+TLS-terminating proxy, every POST is rejected with 403 `csrf_failed`, because
+the browser sends an `https` `Origin` to a server that believes it is serving
+`http`, and the login redirect check stops requiring HTTPS of a `?next=` target.
+Turned on for a port that is reachable directly from the internet, any client
+can name its own address and scheme: `RemoteIP` returns whatever the caller
+typed, poisoning rate limits, audit logs and IP allowlists.
+
+`X-Forwarded-Proto` is safe to rely on for origin validation in a way that a
+general request header is not: it is not CORS-safelisted, so a cross-origin
+script cannot make a browser send it and cannot forge a matching origin.
 
 Applications implement `Routes(chi.Router)` explicitly. The project registry
 invokes route providers in declared app order. Authorization uses
@@ -52,7 +82,8 @@ request.
 CSRF secrets live inside the server-side session. Each exposed token has a new
 random mask, while validation compares the recovered secret in constant time.
 Unsafe methods accept `X-CSRF-Token` or the `csrf_token` form field. A supplied
-`Origin` must exactly match the request scheme and host. Login and password
+`Origin` must exactly match the host and the client's scheme, which behind a
+trusted proxy is the forwarded one rather than the connection's. Login and password
 change rotate both session and CSRF secrets.
 
 ## User flows

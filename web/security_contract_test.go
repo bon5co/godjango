@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -134,8 +135,8 @@ func TestBodyLimitRejectsDeclaredAndStreamingOversizeBodies(t *testing.T) {
 }
 
 func TestTrustedProxyOnlyHonorsForwardingFromDeclaredNetworks(t *testing.T) {
-	handler := TrustedProxy([]netip.Prefix{
-		netip.MustParsePrefix("10.0.0.0/8"),
+	handler := TrustedProxy(TrustedProxyConfig{
+		Networks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 	})(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		_, _ = io.WriteString(response, RemoteIP(request).String())
 	}))
@@ -158,6 +159,106 @@ func TestTrustedProxyOnlyHonorsForwardingFromDeclaredNetworks(t *testing.T) {
 		if got := response.Body.String(); got != test.want {
 			t.Errorf("remote=%s forwarded=%q got %q, want %q", test.remote, test.header, got, test.want)
 		}
+	}
+}
+
+// A TLS-terminating proxy hands this process a plaintext connection, so
+// request.TLS is nil on exactly the deployments that are served over HTTPS.
+// RequestScheme has to answer for the client's connection instead, and only
+// where the peer that restated it was declared trustworthy.
+func TestRequestSchemeFollowsForwardedProtocolOnlyFromATrustedPeer(t *testing.T) {
+	privateNetworks := TrustedProxyConfig{
+		Networks: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+	}
+	anyPeer := TrustedProxyConfig{TrustAnyPeer: true}
+	for _, test := range []struct {
+		name      string
+		config    TrustedProxyConfig
+		bare      bool
+		remote    string
+		forwarded string
+		tls       bool
+		want      string
+	}{
+		{name: "plaintext without a proxy", bare: true, want: "http"},
+		{name: "TLS terminated here without a proxy", bare: true, tls: true, want: "https"},
+		{
+			name:      "forwarded protocol from a declared network",
+			config:    privateNetworks,
+			remote:    "10.1.2.3:1234",
+			forwarded: "https",
+			want:      "https",
+		},
+		{
+			name:      "forwarded protocol from outside every declared network",
+			config:    privateNetworks,
+			remote:    "203.0.113.9:1234",
+			forwarded: "https",
+			want:      "http",
+		},
+		{
+			name:      "forwarded protocol with no network declared at all",
+			remote:    "203.0.113.9:1234",
+			forwarded: "https",
+			want:      "http",
+		},
+		{
+			name:      "forwarded protocol from any peer once that is chosen",
+			config:    anyPeer,
+			remote:    "203.0.113.9:1234",
+			forwarded: "https",
+			want:      "https",
+		},
+		{
+			name:      "leftmost entry of a proxy chain wins",
+			config:    anyPeer,
+			forwarded: "https, http",
+			want:      "https",
+		},
+		{
+			name:      "unrecognised value leaves the observed scheme standing",
+			config:    anyPeer,
+			forwarded: "gopher",
+			tls:       true,
+			want:      "https",
+		},
+		{
+			name:      "a proxy may also report a downgrade to plaintext",
+			config:    anyPeer,
+			forwarded: "http",
+			tls:       true,
+			want:      "http",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var secure bool
+			report := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				secure = RequestIsHTTPS(request)
+				_, _ = io.WriteString(response, RequestScheme(request))
+			})
+			var handler http.Handler = report
+			if !test.bare {
+				handler = TrustedProxy(test.config)(report)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if test.remote != "" {
+				request.RemoteAddr = test.remote
+			}
+			if test.forwarded != "" {
+				request.Header.Set("X-Forwarded-Proto", test.forwarded)
+			}
+			if test.tls {
+				request.TLS = &tls.ConnectionState{}
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if got := response.Body.String(); got != test.want {
+				t.Fatalf("RequestScheme = %q, want %q", got, test.want)
+			}
+			if secure != (test.want == "https") {
+				t.Fatalf("RequestIsHTTPS = %v on scheme %q", secure, test.want)
+			}
+		})
 	}
 }
 
