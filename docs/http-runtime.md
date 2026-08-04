@@ -49,9 +49,22 @@ reports the connection it actually accepted. Declare it one of two ways:
   `X-Forwarded-For` is walked from the trusted edge toward the client and stops
   at the first untrusted address, so a client-prepended value never wins.
 - `TrustAnyPeer`: for platforms that place the application behind their own
-  proxy on a private network without promising a fixed proxy address — Dokploy,
-  Railway, Fly — where the guarantee is that nothing else can reach the port.
-  Generated projects wire this to `TRUST_PROXY_HEADERS`.
+  proxy without promising a fixed proxy address, where the guarantee has to be
+  topological — nothing but the proxy can open a connection to the port.
+  Generated projects wire this to `TRUST_PROXY_HEADERS`. Confirm the guarantee
+  on the platform rather than assuming it: a managed proxy in front is not
+  enough on its own, because on several platforms the containers of one project
+  share a network and can dial each other directly, and on some that network
+  spans the whole account.
+
+Trust is one decision, not two. Both the address and the scheme come from the
+same peer, and there is no coherent position from which its word on one is worth
+more than its word on the other — so turning trust on for the scheme accepts
+`X-Forwarded-For` for `RemoteIP` as well.
+
+`TrustedProxy` has to run ahead of every middleware that asks, which is why the
+generated chain places it first. A request that reaches a caller without passing
+through it is reported as plaintext.
 
 Getting it wrong fails in one direction or the other. Left off behind a
 TLS-terminating proxy, every POST is rejected with 403 `csrf_failed`, because
@@ -64,6 +77,22 @@ typed, poisoning rate limits, audit logs and IP allowlists.
 `X-Forwarded-Proto` is safe to rely on for origin validation in a way that a
 general request header is not: it is not CORS-safelisted, so a cross-origin
 script cannot make a browser send it and cannot forge a matching origin.
+
+Both forwarding headers are read across every line the request carries, nearest
+hop last, and the nearest hop's entry is the one believed. A proxy that adds to
+a header rather than replacing it leaves the client's own value in front of its
+own, and reading that would let a prepended value decide the answer.
+
+### Upgrading an existing project
+
+A project scaffolded before this middleware existed keeps working over plain
+HTTP and keeps failing behind a TLS-terminating proxy until it is wired up. Add
+`TrustProxyHeaders` to `RuntimeSettings` and `env.Optional("TRUST_PROXY_HEADERS",
+&settings.TrustProxyHeaders, false)` to its schema in
+`internal/project/settings.go`, put `web.TrustedProxy(web.TrustedProxyConfig{
+TrustAnyPeer: settings.TrustProxyHeaders})` first in the middleware list in
+`cmd/server/main.go`, and set `TRUST_PROXY_HEADERS=true` in the deployment
+environment. New projects get all three from the scaffold.
 
 Applications implement `Routes(chi.Router)` explicitly. The project registry
 invokes route providers in declared app order. Authorization uses

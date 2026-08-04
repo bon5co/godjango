@@ -253,18 +253,27 @@ type TrustedProxyConfig struct {
 	Networks []netip.Prefix
 
 	// TrustAnyPeer believes forwarding headers from whatever address connected.
-	// It exists for platforms that put the application behind their own proxy on
-	// a private network without promising a fixed proxy address -- Dokploy,
-	// Railway, Fly -- where the guarantee is topological rather than numeric:
-	// nothing except the proxy can reach the port at all. With no Networks
-	// declared the client address is read as the last X-Forwarded-For entry, the
-	// nearest hop, because no entry can be ruled out as infrastructure.
+	// It exists for platforms that put the application behind their own proxy
+	// without promising a fixed proxy address, where the guarantee has to be
+	// topological rather than numeric: nothing but the proxy can open a
+	// connection to the port. With no Networks declared the client address is
+	// read as the last X-Forwarded-For entry, the nearest hop, because no entry
+	// can be ruled out as infrastructure.
 	//
-	// Enabling this on a port that is reachable directly from the internet hands
-	// every request's identity to whoever sent it. RemoteIP then reports the
-	// address the caller typed, so rate limits, audit logs and IP allowlists all
-	// read a value an attacker chose, and RequestScheme reports https over a
-	// plaintext connection. Leave it off unless the port is private.
+	// Confirm that guarantee on the platform rather than assuming it. A managed
+	// proxy in front of the application is not by itself enough: on several
+	// platforms the containers of one project share a network and can dial each
+	// other directly, bypassing the proxy, and on some the shared network spans
+	// the whole account. What has to be true is that no workload outside this
+	// application can reach the port.
+	//
+	// Where that does not hold, this hands every request's identity to whoever
+	// sent it. RemoteIP reports the address the caller typed, so rate limits,
+	// audit logs and IP allowlists all read a value an attacker chose, and
+	// RequestScheme reports https over a plaintext connection. The two go
+	// together deliberately: both answers come from the same peer, and there is
+	// no coherent position from which its word on the scheme is worth more than
+	// its word on the address. Leave it off unless the port is private.
 	TrustAnyPeer bool
 }
 
@@ -281,7 +290,9 @@ func TrustedProxy(config TrustedProxyConfig) Middleware {
 			client := remote
 			scheme := observedScheme(request)
 			if trustAnyPeer || prefixContains(prefixes, remote) {
-				forwarded, valid := forwardedAddresses(request.Header.Get("X-Forwarded-For"))
+				forwarded, valid := forwardedAddresses(
+					forwardedHeader(request.Header, "X-Forwarded-For"),
+				)
 				if valid {
 					for index := len(forwarded) - 1; index >= 0; index-- {
 						if !prefixContains(prefixes, forwarded[index]) {
@@ -291,7 +302,7 @@ func TrustedProxy(config TrustedProxyConfig) Middleware {
 					}
 				}
 				if forwarded, ok := forwardedScheme(
-					request.Header.Get("X-Forwarded-Proto"),
+					forwardedHeader(request.Header, "X-Forwarded-Proto"),
 				); ok {
 					scheme = forwarded
 				}
@@ -303,20 +314,38 @@ func TrustedProxy(config TrustedProxyConfig) Middleware {
 	}
 }
 
-// forwardedScheme reads one X-Forwarded-Proto value. Only http and https are
-// accepted, so a malformed or unexpected value leaves the observed scheme
-// standing instead of becoming the answer by assignment. A proxy chain appends
-// to the header, so the leftmost entry is the scheme the browser used.
+// forwardedHeader joins every line of a repeated forwarding header, nearest hop
+// last. net/http keeps repeated headers as separate values and Header.Get
+// returns only the first of them, which is the client's own line whenever a
+// proxy adds to the header instead of replacing it. Reading that alone would
+// hand both answers to whoever sent the request even though the proxy stated
+// them correctly.
+func forwardedHeader(header http.Header, name string) string {
+	return strings.Join(header.Values(name), ",")
+}
+
+// forwardedScheme reads the scheme from X-Forwarded-Proto, believing the entry
+// the nearest hop contributed -- the last one. That hop is the peer whose word
+// was declared trustworthy; anything to the left of it was written further out
+// and, where a proxy adds to the header rather than replacing it, the leftmost
+// entry is the client's own. This is the rule the address walk already applies,
+// and reading the other end here would defend against a prepended address while
+// believing a prepended scheme. Only http and https are accepted, so a
+// malformed value leaves the observed scheme standing instead of becoming the
+// answer by assignment.
 func forwardedScheme(header string) (string, bool) {
-	first, _, _ := strings.Cut(header, ",")
-	switch strings.ToLower(strings.TrimSpace(first)) {
-	case schemeHTTPS:
-		return schemeHTTPS, true
-	case schemeHTTP:
-		return schemeHTTP, true
-	default:
-		return "", false
+	entries := strings.Split(header, ",")
+	for index := len(entries) - 1; index >= 0; index-- {
+		switch nearest := strings.ToLower(strings.TrimSpace(entries[index])); nearest {
+		case "":
+			continue
+		case schemeHTTPS, schemeHTTP:
+			return nearest, true
+		default:
+			return "", false
+		}
 	}
+	return "", false
 }
 
 // observedScheme is the scheme of the connection this process accepted, which
@@ -334,6 +363,12 @@ func observedScheme(request *http.Request) string {
 // the forwarded scheme only where TrustedProxy accepted the peer; without that
 // middleware, or from an untrusted peer, it answers with the connection this
 // process actually accepted.
+//
+// TrustedProxy therefore has to run ahead of every middleware that asks, which
+// is why the generated chain places it first. A request that reaches a caller
+// without passing through it is reported as plaintext, and the caller sees an
+// http site: CSRF then refuses the application's own forms, and a redirect
+// check stops requiring HTTPS of its target.
 func RequestScheme(request *http.Request) string {
 	if request == nil {
 		return schemeHTTP

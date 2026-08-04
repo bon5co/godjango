@@ -144,16 +144,29 @@ func TestTrustedProxyOnlyHonorsForwardingFromDeclaredNetworks(t *testing.T) {
 	for _, test := range []struct {
 		remote string
 		header string
-		want   string
+		// lines carries the header as separate lines, which is what a client's
+		// own X-Forwarded-For looks like once a proxy adds its own beside it.
+		lines []string
+		want  string
 	}{
 		{remote: "10.1.2.3:1234", header: "203.0.113.9, 10.1.2.3", want: "203.0.113.9"},
 		{remote: "10.1.2.3:1234", header: "198.51.100.8, 203.0.113.9", want: "203.0.113.9"},
 		{remote: "192.0.2.4:1234", header: "203.0.113.9", want: "192.0.2.4"},
 		{remote: "10.1.2.3:1234", header: "not-an-ip", want: "10.1.2.3"},
+		{
+			remote: "10.1.2.3:1234",
+			lines:  []string{"198.51.100.8", "203.0.113.9"},
+			want:   "203.0.113.9",
+		},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/", nil)
 		request.RemoteAddr = test.remote
-		request.Header.Set("X-Forwarded-For", test.header)
+		if test.header != "" {
+			request.Header.Set("X-Forwarded-For", test.header)
+		}
+		for _, line := range test.lines {
+			request.Header.Add("X-Forwarded-For", line)
+		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if got := response.Body.String(); got != test.want {
@@ -172,14 +185,24 @@ func TestRequestSchemeFollowsForwardedProtocolOnlyFromATrustedPeer(t *testing.T)
 	}
 	anyPeer := TrustedProxyConfig{TrustAnyPeer: true}
 	for _, test := range []struct {
-		name      string
-		config    TrustedProxyConfig
-		bare      bool
-		remote    string
-		forwarded string
-		tls       bool
-		want      string
+		name string
+		// forwardedLines carries X-Forwarded-Proto as separate header lines,
+		// which is how a proxy that adds to the header rather than replacing it
+		// leaves the client's own line sitting in front of its own.
+		forwardedLines []string
+		config         TrustedProxyConfig
+		bare           bool
+		remote         string
+		forwarded      string
+		tls            bool
+		want           string
 	}{
+		{
+			name:           "a client's own header line loses to the proxy's",
+			config:         anyPeer,
+			forwardedLines: []string{"https", "http"},
+			want:           "http",
+		},
 		{name: "plaintext without a proxy", bare: true, want: "http"},
 		{name: "TLS terminated here without a proxy", bare: true, tls: true, want: "https"},
 		{
@@ -210,9 +233,24 @@ func TestRequestSchemeFollowsForwardedProtocolOnlyFromATrustedPeer(t *testing.T)
 			want:      "https",
 		},
 		{
-			name:      "leftmost entry of a proxy chain wins",
+			name:      "the nearest hop of a proxy chain is believed",
+			config:    anyPeer,
+			forwarded: "https, https",
+			want:      "https",
+		},
+		{
+			// The client sent the first entry and the proxy added the second.
+			// Believing the leftmost would let a prepended value decide the
+			// scheme, which is what the address walk already refuses.
+			name:      "a value prepended by the client loses to the proxy's",
 			config:    anyPeer,
 			forwarded: "https, http",
+			want:      "http",
+		},
+		{
+			name:      "padding around the chain is skipped",
+			config:    anyPeer,
+			forwarded: "https, ",
 			want:      "https",
 		},
 		{
@@ -246,6 +284,9 @@ func TestRequestSchemeFollowsForwardedProtocolOnlyFromATrustedPeer(t *testing.T)
 			}
 			if test.forwarded != "" {
 				request.Header.Set("X-Forwarded-Proto", test.forwarded)
+			}
+			for _, line := range test.forwardedLines {
+				request.Header.Add("X-Forwarded-Proto", line)
 			}
 			if test.tls {
 				request.TLS = &tls.ConnectionState{}
