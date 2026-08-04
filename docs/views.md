@@ -76,3 +76,42 @@ err := view.Render(response, request, view.RenderOptions{
 The URLs must be same-origin, which is what the policy already permits; a CDN
 host would need the policy widened and is not supported. `Stylesheets` is
 ignored for an HTMX fragment response, which has no head to link into.
+
+## Application scripts
+
+`RenderOptions.Scripts` is the same contract for JavaScript. The default policy
+forbids an inline `<script>`, so an application that needs behaviour on the page
+serves a file and names it:
+
+```go
+err := view.Render(response, request, view.RenderOptions{
+    Title:   "Shelf",
+    Content: shelf.Page(rows),
+    Scripts: []string{"/static/stillworks/app.js"},
+})
+```
+
+Scripts load with `defer`, after the framework's own htmx, Alpine and
+`godjango.js`, so an application script can rely on those being defined. Like
+stylesheets they must be same-origin, and they are ignored for an HTMX fragment.
+
+## Calling a third-party origin from the page
+
+`default-src 'self'` also covers `connect-src`, so `fetch()` to any other host is
+blocked. An application that genuinely has to call an upstream API *from the
+visitor's browser* — because the answer depends on the visitor's own address, not
+the server's — names those origins on the security middleware:
+
+```go
+web.SecurityHeaders(web.SecurityHeadersConfig{
+    HTTPS:          !settings.Debug,
+    ConnectSources: []string{"https://api.llm7.io", "https://text.pollinations.ai"},
+})
+```
+
+The resulting policy is `default-src 'self'; connect-src 'self' <origins>`.
+Nothing else widens: scripts, styles, images and frames stay same-origin. Each
+entry must be a bare `scheme://host[:port]`; a path, a wildcard or a stray
+delimiter is refused at construction rather than serving a policy that does not
+mean what was written. `ContentSecurityPolicy` still replaces the whole policy,
+and cannot be combined with `ConnectSources`.

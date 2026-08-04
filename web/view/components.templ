@@ -2,10 +2,11 @@ package view
 
 // Layout owns the document head. Applications cannot reach into it, and the
 // default Content-Security-Policy is default-src 'self', so an inline <style>
-// in an application component is silently dropped by the browser. Stylesheets
-// is therefore the supported way for an application to ship CSS: same-origin
-// URLs it serves itself, which the policy already allows.
-templ Layout(title string, csrfToken string, stylesheets []string, content templ.Component) {
+// or <script> in an application component is silently dropped by the browser.
+// Stylesheets and scripts are therefore the supported way for an application to
+// ship its own CSS and JavaScript: same-origin URLs it serves itself, which the
+// policy already allows.
+templ Layout(title string, csrfToken string, stylesheets []string, scripts []string, content templ.Component) {
 	<!doctype html>
 	<html lang="en">
 		<head>
@@ -20,6 +21,9 @@ templ Layout(title string, csrfToken string, stylesheets []string, content templ
 			<script defer src="/static/godjango/htmx-2.0.9.min.js"></script>
 			<script defer src="/static/godjango/alpine-3.15.12.min.js"></script>
 			<script defer src="/static/godjango/godjango.js"></script>
+			for _, script := range scripts {
+				<script defer src={ script }></script>
+			}
 		</head>
 		<body>
 			<main id="main" tabindex="-1">
