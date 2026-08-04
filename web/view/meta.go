@@ -91,7 +91,10 @@ func metaTags(options RenderOptions, canonical string, socialURL string, image s
 		tags = appendTag(tags, MetaTag{Property: "og:image:alt", Content: imageAlt})
 	}
 	tags = appendTag(tags, MetaTag{Property: "og:description", Content: socialDescription})
-	tags = appendTag(tags, MetaTag{Property: "og:site_name", Content: social.SiteName})
+	tags = appendTag(tags, MetaTag{
+		Property: "og:site_name",
+		Content:  strings.TrimSpace(social.SiteName),
+	})
 
 	card := strings.TrimSpace(social.TwitterCard)
 	if card == "" {

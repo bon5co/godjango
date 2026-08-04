@@ -600,3 +600,39 @@ func TestRenderLeavesHeadMetadataOutOfAnHTMXFragment(t *testing.T) {
 		t.Fatalf("fragment carried head metadata: %s", body)
 	}
 }
+
+// A canonical URL is an indexing statement, not a link preview, so declaring one
+// on its own gets the link element and nothing else. The distinction matters
+// because every page can name its own address, and if that counted as declaring
+// a card then every page would advertise one.
+func TestRenderTreatsACanonicalURLAloneAsNoSocialCard(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	request := httptest.NewRequest(http.MethodGet, "/llm/?utm_source=nowhere", nil)
+	request.Host = "stillworks.supercapybara.com"
+	request = request.WithContext(requestscheme.With(request.Context(), requestscheme.HTTPS))
+
+	response := httptest.NewRecorder()
+	err := Render(response, request, RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+		Meta:    Meta{Canonical: "/llm/"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := response.Body.String()
+	if !strings.Contains(
+		body,
+		`<link rel="canonical" href="https://stillworks.supercapybara.com/llm/">`,
+	) {
+		t.Fatalf("canonical link missing: %s", body)
+	}
+	for _, absent := range []string{"og:", "twitter:", `name="description"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("canonical URL alone emitted %q: %s", absent, body)
+		}
+	}
+}
