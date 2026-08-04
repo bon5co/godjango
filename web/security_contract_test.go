@@ -202,3 +202,84 @@ func TestCancellationRemainsVisibleThroughMiddleware(t *testing.T) {
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 }
+
+// An application that reports on third-party APIs has to call them from the
+// page to tell a visitor what happens from their own address. ConnectSources
+// widens exactly that one directive and leaves the rest of the policy alone.
+func TestSecurityHeadersWidenOnlyConnectSource(t *testing.T) {
+	handler := Chain(
+		http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.WriteHeader(http.StatusNoContent)
+		}),
+		SecurityHeaders(SecurityHeadersConfig{
+			ConnectSources: []string{"https://api.llm7.io", "https://text.pollinations.ai"},
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://example.com/", nil))
+
+	policy := response.Header().Get("Content-Security-Policy")
+	want := "default-src 'self'; connect-src 'self' https://api.llm7.io https://text.pollinations.ai"
+	if policy != want {
+		t.Fatalf("policy = %q, want %q", policy, want)
+	}
+	// 'self' has to be restated: connect-src replaces default-src for fetches
+	// rather than adding to it, so dropping it would cost the application its
+	// own API calls.
+	if !strings.Contains(policy, "connect-src 'self'") {
+		t.Fatal("connect-src must keep 'self'")
+	}
+}
+
+func TestSecurityHeadersKeepDefaultPolicyWithoutConnectSources(t *testing.T) {
+	handler := SecurityHeaders(SecurityHeadersConfig{})(
+		http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://example.com/", nil))
+
+	if policy := response.Header().Get("Content-Security-Policy"); policy != "default-src 'self'" {
+		t.Fatalf("policy = %q, want the unwidened default", policy)
+	}
+}
+
+// Each of these would produce a policy that does not mean what the caller
+// wrote: a path is ignored by the browser, a delimiter rewrites the neighbouring
+// directives, and a wildcard host is a wider grant than anyone typing one origin
+// intended. Failing at construction puts the error where the mistake is.
+func TestSecurityHeadersRejectMalformedConnectSources(t *testing.T) {
+	for _, source := range []string{
+		"https://api.llm7.io/v1/chat",
+		"api.llm7.io",
+		"https://*.llm7.io",
+		"https://api.llm7.io; script-src *",
+		"ftp://api.llm7.io",
+		"",
+	} {
+		t.Run(source, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Fatalf("connect-src source %q was accepted", source)
+				}
+			}()
+			SecurityHeaders(SecurityHeadersConfig{ConnectSources: []string{source}})
+		})
+	}
+}
+
+// A caller who replaced the whole policy owns every directive in it. Merging
+// ConnectSources into their string would mean the header no longer matches what
+// either side wrote, so the combination is refused instead.
+func TestSecurityHeadersRefuseConnectSourcesBesideAWholePolicy(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatal("a whole-policy override alongside ConnectSources was accepted")
+		}
+	}()
+	SecurityHeaders(SecurityHeadersConfig{
+		ContentSecurityPolicy: "default-src 'none'",
+		ConnectSources:        []string{"https://api.llm7.io"},
+	})
+}

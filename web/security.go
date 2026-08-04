@@ -126,14 +126,31 @@ func WriteError(response http.ResponseWriter, request *http.Request, status int,
 }
 
 type SecurityHeadersConfig struct {
-	HTTPS                 bool
+	HTTPS bool
+	// ContentSecurityPolicy replaces the default policy wholesale. Setting it
+	// takes over responsibility for every directive, so ConnectSources is
+	// refused alongside it rather than silently ignored.
 	ContentSecurityPolicy string
+	// ConnectSources widens the default policy by exactly one directive:
+	// connect-src. An application whose page must call a named third-party
+	// origin from the browser -- an upstream API it is reporting on, not an
+	// asset host -- names those origins here instead of restating the whole
+	// policy and drifting from the default as it changes. Everything else stays
+	// at default-src 'self', so scripts, styles and frames do not widen with it.
+	ConnectSources []string
 }
 
+// SecurityHeaders panics on a configuration that cannot mean what it says. A
+// policy silently missing the origins an application declared would fail as a
+// blocked request in the browser, at a distance from the mistake.
 func SecurityHeaders(config SecurityHeadersConfig) Middleware {
 	contentSecurityPolicy := config.ContentSecurityPolicy
+	if contentSecurityPolicy != "" && len(config.ConnectSources) > 0 {
+		panic("godjango web: ContentSecurityPolicy replaces the whole policy; " +
+			"declare connect-src inside it rather than in ConnectSources")
+	}
 	if contentSecurityPolicy == "" {
-		contentSecurityPolicy = "default-src 'self'"
+		contentSecurityPolicy = defaultContentSecurityPolicy(config.ConnectSources)
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -149,6 +166,49 @@ func SecurityHeaders(config SecurityHeadersConfig) Middleware {
 			next.ServeHTTP(response, request)
 		})
 	}
+}
+
+// defaultContentSecurityPolicy is default-src 'self' plus, when an application
+// declared them, a connect-src directive listing 'self' and those origins. The
+// directive repeats 'self' because connect-src overrides default-src for that
+// fetch type rather than adding to it: omitting it would take the application's
+// own API calls away in exchange for reaching a third party.
+func defaultContentSecurityPolicy(connectSources []string) string {
+	const base = "default-src 'self'"
+	if len(connectSources) == 0 {
+		return base
+	}
+	sources := make([]string, 0, len(connectSources)+1)
+	sources = append(sources, "'self'")
+	for _, source := range connectSources {
+		trimmed := strings.TrimSpace(source)
+		if !validConnectSource(trimmed) {
+			panic("godjango web: connect-src source must be scheme://host[:port], got " + source)
+		}
+		sources = append(sources, trimmed)
+	}
+	return base + "; connect-src " + strings.Join(sources, " ")
+}
+
+// validConnectSource accepts only a plain origin. A path, a wildcard host or
+// anything carrying a delimiter would either be ignored by the browser or
+// rewrite the neighbouring directives, and both fail far from the config that
+// caused them.
+func validConnectSource(source string) bool {
+	if source == "" || strings.ContainsAny(source, " \t;,'\"") {
+		return false
+	}
+	parsed, err := url.Parse(source)
+	if err != nil || parsed.User != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	if parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return !strings.Contains(parsed.Host, "*")
 }
 
 func BodyLimit(bytes int64) Middleware {

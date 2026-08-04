@@ -19,6 +19,12 @@ type RenderOptions struct {
 	// default-src 'self', which permits this and forbids both inline styles and
 	// third-party hosts. Ignored on an HTMX fragment response, which has no head.
 	Stylesheets []string
+	// Scripts are same-origin URLs loaded with defer after the framework's own
+	// scripts, for an application that ships its own JavaScript. The same policy
+	// applies as to Stylesheets: an inline <script> in an application component
+	// is dropped by the browser, and a third-party host is refused. Ignored on an
+	// HTMX fragment response, which has no head.
+	Scripts     []string
 	CSRFToken   string
 	PushURL     string
 	CachePolicy CachePolicy

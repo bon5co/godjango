@@ -208,3 +208,46 @@ func TestRenderLinksApplicationStylesheetsIntoTheHead(t *testing.T) {
 		t.Fatal("an HTMX fragment has no head and must not carry stylesheet links")
 	}
 }
+
+// The same argument as for stylesheets applies to JavaScript, and one step
+// further: an application that must call a third-party API from the page has no
+// way to do it from an inline handler under default-src 'self'. The script has
+// to arrive as a same-origin file, in the head, and stay out of a fragment.
+func TestRenderLoadsApplicationScriptsFromTheHead(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	options := RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+		Scripts: []string{"/static/stillworks/app.js"},
+	}
+
+	full := httptest.NewRecorder()
+	if err := Render(full, httptest.NewRequest(http.MethodGet, "/llm/", nil), options); err != nil {
+		t.Fatalf("render full page: %v", err)
+	}
+	body := full.Body.String()
+	if !strings.Contains(body, `<script defer src="/static/stillworks/app.js"></script>`) {
+		t.Fatalf("application script missing from head: %s", body)
+	}
+	if strings.Index(body, "/static/stillworks/app.js") > strings.Index(body, "<body") {
+		t.Fatal("application script must be loaded from the head, not the body")
+	}
+	// After the framework's own scripts: an application script that assumed htmx
+	// was defined would otherwise break depending on load order.
+	if strings.Index(body, "/static/stillworks/app.js") < strings.Index(body, "godjango.js") {
+		t.Fatal("application scripts must follow the framework's own")
+	}
+
+	fragment := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Header.Set("HX-Request", "true")
+	if err := Render(fragment, request, options); err != nil {
+		t.Fatalf("render fragment: %v", err)
+	}
+	if strings.Contains(fragment.Body.String(), "app.js") {
+		t.Fatal("an HTMX fragment has no head and must not carry script tags")
+	}
+}
