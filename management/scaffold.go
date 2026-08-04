@@ -183,6 +183,11 @@ func main() {
 			},
 		},
 		Middleware: []web.Middleware{
+			// Decides whether this deployment's forwarding headers can be
+			// believed, before anything reads the client address or scheme.
+			web.TrustedProxy(web.TrustedProxyConfig{
+				TrustAnyPeer: settings.TrustProxyHeaders,
+			}),
 			web.RequestID(),
 			web.Recover(),
 			web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !settings.Debug}),
@@ -527,6 +532,14 @@ type RuntimeSettings struct {
 	SessionSecret env.Secret
 	Debug       bool
 	Port        int
+	// TrustProxyHeaders believes X-Forwarded-For and X-Forwarded-Proto from
+	// whatever address connected. Set it where a platform proxy terminates TLS
+	// in front of a port only that proxy can reach (Dokploy, Railway, Fly); with
+	// it unset behind such a proxy, every POST is rejected as a cross-origin
+	// request because the server sees plain HTTP while the browser sends an
+	// https Origin. Setting it on a port exposed directly to the internet is the
+	// opposite mistake: any client can then name its own address and scheme.
+	TrustProxyHeaders bool
 }
 
 func LoadDatabaseSettings() (DatabaseSettings, error) {
@@ -555,6 +568,7 @@ func LoadRuntimeSettings() (RuntimeSettings, error) {
 		env.Required("SESSION_SECRET", &settings.SessionSecret),
 		env.Optional("DEBUG", &settings.Debug, false),
 		env.Optional("PORT", &settings.Port, 8000),
+		env.Optional("TRUST_PROXY_HEADERS", &settings.TrustProxyHeaders, false),
 	)
 	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
 		return RuntimeSettings{}, err

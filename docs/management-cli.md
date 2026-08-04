@@ -68,9 +68,9 @@ identity fields; `--noinput` instead requires flags or the corresponding
 Database, migration, auth, shell, and server services load lazily. `test` and
 source-only commands do not open PostgreSQL. Database-owning commands always
 close their pool before returning. Generated runtime settings declare
-`DATABASE_URL` as required, with `DEBUG=false` and `PORT=8000` as explicit
-optional defaults; a missing required value fails before the server listens or
-a database command begins.
+`DATABASE_URL` as required, with `DEBUG=false`, `PORT=8000` and
+`TRUST_PROXY_HEADERS=false` as explicit optional defaults; a missing required
+value fails before the server listens or a database command begins.
 
 Each app's `commands.go` takes the project's `management.ProjectServices` and
 returns `[]management.Command`. The generated `internal/project/commands.go`

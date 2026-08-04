@@ -130,11 +130,15 @@ func validRequestOrigin(request *http.Request) bool {
 	if err != nil || parsed.User != nil || parsed.Path != "" {
 		return false
 	}
-	expectedScheme := "http"
-	if request.TLS != nil {
-		expectedScheme = "https"
-	}
-	return parsed.Scheme == expectedScheme &&
+	// The comparison is against the client's scheme, not this process's: behind
+	// a TLS-terminating proxy the connection here is plaintext while the browser
+	// sends Origin: https://..., and checking the connection would reject every
+	// form the application serves. X-Forwarded-Proto is safe to rely on for this
+	// decision because a cross-origin script cannot set it -- it is not a
+	// CORS-safelisted request header, so the browser refuses to send it -- but
+	// it is still only read from a peer the application declared trusted. See
+	// TrustedProxyConfig.
+	return parsed.Scheme == RequestScheme(request) &&
 		strings.EqualFold(parsed.Host, request.Host)
 }
 

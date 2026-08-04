@@ -264,6 +264,134 @@ func TestCSRFMasksTokensRejectsFailuresAndRotatesOnLogin(t *testing.T) {
 	}
 }
 
+// Every deployed application sits behind a proxy that terminates TLS, so the
+// connection reaching this process is plaintext while the browser still sends
+// an https Origin. Validating that Origin against the connection rejected every
+// POST form in production while passing locally over plain HTTP; the forwarded
+// scheme is what makes the two agree, and only from a peer that was declared
+// trustworthy.
+func TestCSRFOriginFollowsTheForwardedSchemeFromATrustedProxy(t *testing.T) {
+	const serverOrigin = "SERVER_ORIGIN"
+	for _, test := range []struct {
+		name      string
+		trust     TrustedProxyConfig
+		forwarded string
+		origin    string
+		status    int
+	}{
+		{
+			name:      "https origin through a trusted proxy",
+			trust:     TrustedProxyConfig{TrustAnyPeer: true},
+			forwarded: "https",
+			origin:    "https://" + serverOrigin,
+			status:    http.StatusNoContent,
+		},
+		{
+			name:      "another site's origin is still refused",
+			trust:     TrustedProxyConfig{TrustAnyPeer: true},
+			forwarded: "https",
+			origin:    "https://evil.example",
+			status:    http.StatusForbidden,
+		},
+		{
+			name:      "an http origin no longer matches an https deployment",
+			trust:     TrustedProxyConfig{TrustAnyPeer: true},
+			forwarded: "https",
+			origin:    "http://" + serverOrigin,
+			status:    http.StatusForbidden,
+		},
+		{
+			name:      "the header is ignored where no proxy is trusted",
+			forwarded: "https",
+			origin:    "https://" + serverOrigin,
+			status:    http.StatusForbidden,
+		},
+		{
+			name:   "a direct plaintext deployment still validates its own origin",
+			origin: "http://" + serverOrigin,
+			status: http.StatusNoContent,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sessions, err := NewSessions(SessionConfig{
+				CookieName: "godjango_session",
+				Lifetime:   time.Hour,
+				SameSite:   http.SameSiteLaxMode,
+			}, memstore.New())
+			if err != nil {
+				t.Fatal(err)
+			}
+			csrf, err := NewCSRF(CSRFConfig{
+				CookieName: "godjango_csrf",
+				SameSite:   http.SameSiteLaxMode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The cookies are left unmarked here only because Go's cookie jar
+			// refuses Secure cookies over the plaintext hop this test is
+			// reproducing. A real browser is on https and keeps them.
+			handler := Chain(
+				http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case "/token":
+						_, _ = io.WriteString(response, CSRFToken(request))
+					case "/submit":
+						response.WriteHeader(http.StatusNoContent)
+					}
+				}),
+				TrustedProxy(test.trust),
+				sessions.Middleware,
+				csrf.Middleware,
+			)
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			jar, err := cookiejar.New(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := server.Client()
+			client.Jar = jar
+			host := mustURL(t, server.URL).Host
+
+			tokenRequest, err := http.NewRequest(http.MethodGet, server.URL+"/token", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.forwarded != "" {
+				tokenRequest.Header.Set("X-Forwarded-Proto", test.forwarded)
+			}
+			tokenResponse, err := client.Do(tokenRequest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokenBytes, err := io.ReadAll(tokenResponse.Body)
+			tokenResponse.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			request, err := http.NewRequest(http.MethodPost, server.URL+"/submit", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("X-CSRF-Token", string(tokenBytes))
+			request.Header.Set("Origin", strings.ReplaceAll(test.origin, serverOrigin, host))
+			if test.forwarded != "" {
+				request.Header.Set("X-Forwarded-Proto", test.forwarded)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			if response.StatusCode != test.status {
+				t.Fatalf("status = %d, want %d", response.StatusCode, test.status)
+			}
+		})
+	}
+}
+
 func namedCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
 	t.Helper()
 	for _, cookie := range cookies {

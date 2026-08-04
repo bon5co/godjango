@@ -66,6 +66,23 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 			t.Errorf("generated server missing runtime dependency %q", fragment)
 		}
 	}
+	// Without this middleware the generated application cannot learn that a
+	// proxy terminated TLS in front of it, and every POST form it serves is
+	// refused as cross-origin once it is deployed.
+	trustedProxy := strings.Index(string(server), "web.TrustedProxy(web.TrustedProxyConfig{")
+	if trustedProxy < 0 {
+		t.Error("generated server does not decide whether to trust forwarding headers")
+	}
+	if csrf := strings.Index(string(server), "csrf.Middleware"); trustedProxy > csrf {
+		t.Error("generated server resolves the request scheme after CSRF reads it")
+	}
+	services, err := os.ReadFile(filepath.Join(root, "internal", "project", "services.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(services), "TRUST_PROXY_HEADERS") {
+		t.Error("generated runtime settings do not declare TRUST_PROXY_HEADERS")
+	}
 
 	runGo(t, root, "test", "./...")
 	runGo(t, root, "vet", "./...")

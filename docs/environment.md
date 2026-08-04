@@ -52,7 +52,10 @@ location.
 Never commit a `.env` file containing secrets.
 
 Generated HTTP projects declare `DATABASE_URL` and `SESSION_SECRET` as
-required. `DEBUG` defaults to `false`, and `PORT` defaults to `8000`. The full
+required. `DEBUG` defaults to `false`, `PORT` defaults to `8000`, and
+`TRUST_PROXY_HEADERS` defaults to `false` — set it where a platform proxy
+terminates TLS in front of a port only that proxy can reach, and see the reverse
+proxy section of `docs/http-runtime.md` for what each mistake costs. The full
 schema is validated before `cmd/server` opens PostgreSQL or a network listener.
 Database-only management commands intentionally load only `DATABASE_URL`;
 source scaffolding and unit tests load neither.

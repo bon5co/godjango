@@ -230,14 +230,69 @@ func BodyLimit(bytes int64) Middleware {
 
 type remoteIPContextKey struct{}
 
-func TrustedProxy(trusted []netip.Prefix) Middleware {
-	prefixes := append([]netip.Prefix(nil), trusted...)
+type requestSchemeContextKey struct{}
+
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// TrustedProxyConfig declares which immediate peers are allowed to speak for
+// the client. A reverse proxy rewrites both facts an application cares about:
+// the address it accepted the connection from is the proxy's, and the scheme it
+// was reached by is plaintext HTTP whenever the proxy terminated TLS. The proxy
+// restates the originals in X-Forwarded-For and X-Forwarded-Proto, and this is
+// where an application says those restatements can be believed. Believing them
+// unconditionally would let any client name its own address and scheme, so the
+// default -- an unconfigured application -- believes nothing.
+type TrustedProxyConfig struct {
+	// Networks are the peer addresses whose forwarding headers are believed.
+	// A request arriving from outside them keeps the address and scheme this
+	// process observed, so a client that invents the headers speaks only for
+	// itself.
+	Networks []netip.Prefix
+
+	// TrustAnyPeer believes forwarding headers from whatever address connected.
+	// It exists for platforms that put the application behind their own proxy
+	// without promising a fixed proxy address, where the guarantee has to be
+	// topological rather than numeric: nothing but the proxy can open a
+	// connection to the port. With no Networks declared the client address is
+	// read as the last X-Forwarded-For entry, the nearest hop, because no entry
+	// can be ruled out as infrastructure.
+	//
+	// Confirm that guarantee on the platform rather than assuming it. A managed
+	// proxy in front of the application is not by itself enough: on several
+	// platforms the containers of one project share a network and can dial each
+	// other directly, bypassing the proxy, and on some the shared network spans
+	// the whole account. What has to be true is that no workload outside this
+	// application can reach the port.
+	//
+	// Where that does not hold, this hands every request's identity to whoever
+	// sent it. RemoteIP reports the address the caller typed, so rate limits,
+	// audit logs and IP allowlists all read a value an attacker chose, and
+	// RequestScheme reports https over a plaintext connection. The two go
+	// together deliberately: both answers come from the same peer, and there is
+	// no coherent position from which its word on the scheme is worth more than
+	// its word on the address. Leave it off unless the port is private.
+	TrustAnyPeer bool
+}
+
+// TrustedProxy resolves, once per request, the two facts a reverse proxy
+// obscures: the address the client connected from and the scheme it used. Both
+// are decided here so the trust boundary is a single place in the source rather
+// than a header read repeated in every middleware that needs one of them.
+func TrustedProxy(config TrustedProxyConfig) Middleware {
+	prefixes := append([]netip.Prefix(nil), config.Networks...)
+	trustAnyPeer := config.TrustAnyPeer
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			remote := addressFromRemoteAddr(request.RemoteAddr)
 			client := remote
-			if prefixContains(prefixes, remote) {
-				forwarded, valid := forwardedAddresses(request.Header.Get("X-Forwarded-For"))
+			scheme := observedScheme(request)
+			if trustAnyPeer || prefixContains(prefixes, remote) {
+				forwarded, valid := forwardedAddresses(
+					forwardedHeader(request.Header, "X-Forwarded-For"),
+				)
 				if valid {
 					for index := len(forwarded) - 1; index >= 0; index-- {
 						if !prefixContains(prefixes, forwarded[index]) {
@@ -246,11 +301,88 @@ func TrustedProxy(trusted []netip.Prefix) Middleware {
 						}
 					}
 				}
+				if forwarded, ok := forwardedScheme(
+					forwardedHeader(request.Header, "X-Forwarded-Proto"),
+				); ok {
+					scheme = forwarded
+				}
 			}
 			ctx := context.WithValue(request.Context(), remoteIPContextKey{}, client)
+			ctx = context.WithValue(ctx, requestSchemeContextKey{}, scheme)
 			next.ServeHTTP(response, request.WithContext(ctx))
 		})
 	}
+}
+
+// forwardedHeader joins every line of a repeated forwarding header, nearest hop
+// last. net/http keeps repeated headers as separate values and Header.Get
+// returns only the first of them, which is the client's own line whenever a
+// proxy adds to the header instead of replacing it. Reading that alone would
+// hand both answers to whoever sent the request even though the proxy stated
+// them correctly.
+func forwardedHeader(header http.Header, name string) string {
+	return strings.Join(header.Values(name), ",")
+}
+
+// forwardedScheme reads the scheme from X-Forwarded-Proto, believing the entry
+// the nearest hop contributed -- the last one. That hop is the peer whose word
+// was declared trustworthy; anything to the left of it was written further out
+// and, where a proxy adds to the header rather than replacing it, the leftmost
+// entry is the client's own. This is the rule the address walk already applies,
+// and reading the other end here would defend against a prepended address while
+// believing a prepended scheme. Only http and https are accepted, so a
+// malformed value leaves the observed scheme standing instead of becoming the
+// answer by assignment.
+func forwardedScheme(header string) (string, bool) {
+	entries := strings.Split(header, ",")
+	for index := len(entries) - 1; index >= 0; index-- {
+		switch nearest := strings.ToLower(strings.TrimSpace(entries[index])); nearest {
+		case "":
+			continue
+		case schemeHTTPS, schemeHTTP:
+			return nearest, true
+		default:
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// observedScheme is the scheme of the connection this process accepted, which
+// is all net/http can determine without being told.
+func observedScheme(request *http.Request) string {
+	if request.TLS != nil {
+		return schemeHTTPS
+	}
+	return schemeHTTP
+}
+
+// RequestScheme reports the scheme the client used, which behind a
+// TLS-terminating proxy is not the scheme this process was reached by: the
+// connection here is plaintext while the browser is on https. It answers with
+// the forwarded scheme only where TrustedProxy accepted the peer; without that
+// middleware, or from an untrusted peer, it answers with the connection this
+// process actually accepted.
+//
+// TrustedProxy therefore has to run ahead of every middleware that asks, which
+// is why the generated chain places it first. A request that reaches a caller
+// without passing through it is reported as plaintext, and the caller sees an
+// http site: CSRF then refuses the application's own forms, and a redirect
+// check stops requiring HTTPS of its target.
+func RequestScheme(request *http.Request) string {
+	if request == nil {
+		return schemeHTTP
+	}
+	if scheme, ok := request.Context().Value(requestSchemeContextKey{}).(string); ok {
+		return scheme
+	}
+	return observedScheme(request)
+}
+
+// RequestIsHTTPS reports whether the client's own connection was encrypted,
+// including the case where a trusted proxy terminated that encryption.
+func RequestIsHTTPS(request *http.Request) bool {
+	return RequestScheme(request) == schemeHTTPS
 }
 
 func forwardedAddresses(header string) ([]netip.Addr, bool) {
