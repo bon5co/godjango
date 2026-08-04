@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/a-h/templ"
+	"github.com/bon5co/godjango/internal/requestscheme"
 )
 
 func TestRenderNegotiatesFullPageAndHTMXFragmentFromSharedComponent(t *testing.T) {
@@ -249,5 +250,353 @@ func TestRenderLoadsApplicationScriptsFromTheHead(t *testing.T) {
 	}
 	if strings.Contains(fragment.Body.String(), "app.js") {
 		t.Fatal("an HTMX fragment has no head and must not carry script tags")
+	}
+}
+
+// A page with a finished social card image and no way to advertise it is the
+// gap this covers: the tags have to be complete, absolute, and in the head of a
+// full-page response. The defaults matter as much as the fields -- a caller that
+// names a description and an image should not have to restate its own title for
+// the card to render.
+func TestRenderWritesCompleteHeadMetadataFromDeclaredValues(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Host = "stillworks.supercapybara.com"
+	// What a TLS-terminating proxy leaves behind: a plaintext connection to this
+	// process and the client's real scheme carried in the request context.
+	request = request.WithContext(requestscheme.With(request.Context(), requestscheme.HTTPS))
+
+	response := httptest.NewRecorder()
+	err := Render(response, request, RenderOptions{
+		Title:   "Keyless LLM registry",
+		Content: content,
+		Meta: Meta{
+			Description: "Every keyless LLM endpoint, probed hourly.",
+			Canonical:   "/llm/",
+			Icon: Icon{
+				Href:       "/static/stillworks/icon.a1b2c3.svg",
+				Type:       "image/svg+xml",
+				AppleTouch: "/static/stillworks/apple-touch-icon.a1b2c3.png",
+			},
+			Social: Social{
+				Image:    "/static/stillworks/card.a1b2c3.png",
+				ImageAlt: "The stillworks registry",
+				SiteName: "stillworks",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render full page: %v", err)
+	}
+
+	body := response.Body.String()
+	head := strings.Join([]string{
+		`<meta name="description" content="Every keyless LLM endpoint, probed hourly.">`,
+		`<meta property="og:title" content="Keyless LLM registry">`,
+		`<meta property="og:type" content="website">`,
+		`<meta property="og:url" content="https://stillworks.supercapybara.com/llm/">`,
+		`<meta property="og:image" ` +
+			`content="https://stillworks.supercapybara.com/static/stillworks/card.a1b2c3.png">`,
+		`<meta property="og:image:alt" content="The stillworks registry">`,
+		`<meta property="og:description" content="Every keyless LLM endpoint, probed hourly.">`,
+		`<meta property="og:site_name" content="stillworks">`,
+		`<meta name="twitter:card" content="summary_large_image">`,
+		`<meta name="twitter:title" content="Keyless LLM registry">`,
+		`<meta name="twitter:description" content="Every keyless LLM endpoint, probed hourly.">`,
+		`<meta name="twitter:image" ` +
+			`content="https://stillworks.supercapybara.com/static/stillworks/card.a1b2c3.png">`,
+		`<meta name="twitter:image:alt" content="The stillworks registry">`,
+		`<link rel="canonical" href="https://stillworks.supercapybara.com/llm/">`,
+		`<link rel="icon" type="image/svg+xml" href="/static/stillworks/icon.a1b2c3.svg">`,
+		`<link rel="apple-touch-icon" href="/static/stillworks/apple-touch-icon.a1b2c3.png">`,
+	}, "")
+	if !strings.Contains(body, head) {
+		t.Fatalf("head metadata missing or out of order.\nwant: %s\ngot: %s", head, body)
+	}
+	if strings.Index(body, `property="og:image"`) > strings.Index(body, "<body") {
+		t.Fatal("head metadata must be in the head, not the body")
+	}
+}
+
+// The absent value is the case that goes wrong quietly: an empty content=""
+// reads to a scraper as "this page declares it has no description", which stops
+// it falling back to anything else. A field nobody set emits no tag at all.
+func TestRenderOmitsMetadataNobodyDeclared(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	response := httptest.NewRecorder()
+	err := Render(response, httptest.NewRequest(http.MethodGet, "/llm/", nil), RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+	})
+	if err != nil {
+		t.Fatalf("render full page: %v", err)
+	}
+	// The CSRF token's own meta element is excluded: it is written unconditionally
+	// so the client bridge always finds it, and an empty one means "no session"
+	// rather than "no value".
+	head := strings.Replace(
+		response.Body.String(),
+		`<meta name="csrf-token" content="">`,
+		"",
+		1,
+	)
+	body := response.Body.String()
+	if strings.Contains(head, `content=""`) {
+		t.Fatalf("empty content attribute emitted: %s", head)
+	}
+	for _, absent := range []string{
+		"og:",
+		"twitter:",
+		`name="description"`,
+		`rel="canonical"`,
+		`rel="icon"`,
+		`rel="apple-touch-icon"`,
+	} {
+		if strings.Contains(body, absent) {
+			t.Errorf("page declaring no metadata still emitted %q: %s", absent, body)
+		}
+	}
+}
+
+// The twitter:card value decides how the image is cropped, so it follows the
+// image rather than waiting for the caller to know the two magic strings. An
+// explicitly named card wins over both.
+func TestRenderChoosesTwitterCardFromWhetherAnImageIsPresent(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	for _, test := range []struct {
+		name   string
+		social Social
+		want   string
+	}{
+		{
+			name:   "image implies a large card",
+			social: Social{Image: "/static/card.png"},
+			want:   `<meta name="twitter:card" content="summary_large_image">`,
+		},
+		{
+			name:   "no image stays a summary",
+			social: Social{Description: "A shelf."},
+			want:   `<meta name="twitter:card" content="summary">`,
+		},
+		{
+			name:   "an explicit card is honoured",
+			social: Social{Image: "/static/card.png", TwitterCard: "summary"},
+			want:   `<meta name="twitter:card" content="summary">`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			err := Render(response, httptest.NewRequest(http.MethodGet, "/", nil), RenderOptions{
+				Title:   "Shelf",
+				Content: content,
+				Meta:    Meta{Social: test.social},
+			})
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if !strings.Contains(response.Body.String(), test.want) {
+				t.Fatalf("want %q in %s", test.want, response.Body.String())
+			}
+		})
+	}
+}
+
+// Meta.Origin exists for the deployment that knows its public address, and it
+// has to beat the request's Host header: a request arriving under any other name
+// that routes here would otherwise write that name into this page's canonical
+// URL.
+func TestRenderPrefersTheDeclaredOriginOverTheRequestHost(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Host = "attacker.example"
+
+	response := httptest.NewRecorder()
+	err := Render(response, request, RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+		Meta: Meta{
+			Canonical: "/llm/",
+			Origin:    "https://stillworks.supercapybara.com",
+			Social: Social{
+				// Already absolute, and on another host: passed through, because
+				// a card served from a CDN is a legitimate thing to declare.
+				Image: "https://cdn.example.com/card.png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := response.Body.String()
+	for _, want := range []string{
+		`<link rel="canonical" href="https://stillworks.supercapybara.com/llm/">`,
+		`<meta property="og:url" content="https://stillworks.supercapybara.com/llm/">`,
+		`<meta property="og:image" content="https://cdn.example.com/card.png">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "attacker.example") {
+		t.Fatalf("request Host leaked into the head over a declared origin: %s", body)
+	}
+}
+
+// Every one of these produces a tag that is present, syntactically fine, and
+// silently ignored by the scrapers it was written for. They fail the render
+// instead, before a byte is written, so the handler serves a 500 that someone
+// notices rather than a page whose previews never worked.
+func TestRenderRefusesMetadataURLsItCannotMakeAbsolute(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	for _, test := range []struct {
+		name string
+		host string
+		meta Meta
+	}{
+		{
+			name: "protocol-relative image",
+			host: "stillworks.supercapybara.com",
+			meta: Meta{Social: Social{Image: "//cdn.example.com/card.png"}},
+		},
+		{
+			name: "document-relative image",
+			host: "stillworks.supercapybara.com",
+			meta: Meta{Social: Social{Image: "card.png"}},
+		},
+		{
+			name: "image on a scheme no scraper fetches",
+			host: "stillworks.supercapybara.com",
+			meta: Meta{Social: Social{Image: "data:image/png;base64,iVBORw0KGgo="}},
+		},
+		{
+			name: "origin carrying a path",
+			host: "stillworks.supercapybara.com",
+			meta: Meta{
+				Origin: "https://stillworks.supercapybara.com/",
+				Social: Social{Image: "/static/card.png"},
+			},
+		},
+		{
+			name: "origin without a scheme",
+			host: "stillworks.supercapybara.com",
+			meta: Meta{
+				Origin: "stillworks.supercapybara.com",
+				Social: Social{Image: "/static/card.png"},
+			},
+		},
+		{
+			name: "no origin to resolve against",
+			meta: Meta{Canonical: "/llm/"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+			request.Host = test.host
+			response := httptest.NewRecorder()
+			err := Render(response, request, RenderOptions{
+				Title:   "Shelf",
+				Content: content,
+				Meta:    test.meta,
+			})
+			if err == nil {
+				t.Fatalf("render accepted %q: %s", test.name, response.Body.String())
+			}
+			if response.Body.Len() != 0 {
+				t.Fatalf("body written before the failure: %s", response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != "" {
+				t.Fatalf("headers written before the failure: Content-Type=%q", got)
+			}
+		})
+	}
+}
+
+// Metadata is prose an application accepts from wherever it likes -- a database
+// row, a form, a CMS -- and it lands in an HTML attribute. Nothing in it may
+// close that attribute or open a tag.
+func TestRenderEscapesMetadataIntoAttributes(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	hostile := `Quote " angle <script>alert('x')</script> & ampersand`
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Host = "stillworks.supercapybara.com"
+
+	response := httptest.NewRecorder()
+	err := Render(response, request, RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+		Meta: Meta{
+			Description: hostile,
+			Social:      Social{Image: "/static/card.png", ImageAlt: hostile},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := response.Body.String()
+	escaped := `Quote &#34; angle &lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; ampersand`
+	for _, want := range []string{
+		`<meta name="description" content="` + escaped + `">`,
+		`<meta property="og:image:alt" content="` + escaped + `">`,
+		`<meta property="og:description" content="` + escaped + `">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing escaped tag %q: %s", want, body)
+		}
+	}
+	head := body[:strings.Index(body, "</head>")]
+	for _, forbidden := range []string{"<script>", `alert('x')`, `content="Quote "`} {
+		if strings.Contains(head, forbidden) {
+			t.Fatalf("unescaped %q reached the head: %s", forbidden, head)
+		}
+	}
+}
+
+// A fragment has no head, so the metadata has nowhere to go. It is dropped for
+// the same reason stylesheets and scripts are, rather than being appended to the
+// swapped markup where it would accumulate on every swap.
+func TestRenderLeavesHeadMetadataOutOfAnHTMXFragment(t *testing.T) {
+	content := templ.ComponentFunc(func(_ context.Context, writer io.Writer) error {
+		_, err := io.WriteString(writer, `<section>Shelf</section>`)
+		return err
+	})
+	request := httptest.NewRequest(http.MethodGet, "/llm/", nil)
+	request.Host = "stillworks.supercapybara.com"
+	request.Header.Set("HX-Request", "true")
+
+	response := httptest.NewRecorder()
+	err := Render(response, request, RenderOptions{
+		Title:   "Shelf",
+		Content: content,
+		Meta: Meta{
+			Description: "Every keyless LLM endpoint, probed hourly.",
+			Canonical:   "/llm/",
+			Icon:        Icon{Href: "/static/icon.svg"},
+			Social:      Social{Image: "/static/card.png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render fragment: %v", err)
+	}
+	body := response.Body.String()
+	if body != `<section>Shelf</section>` {
+		t.Fatalf("fragment carried head metadata: %s", body)
 	}
 }
