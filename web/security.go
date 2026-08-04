@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/bon5co/godjango/internal/requestscheme"
 )
 
 type Middleware func(http.Handler) http.Handler
@@ -230,11 +232,12 @@ func BodyLimit(bytes int64) Middleware {
 
 type remoteIPContextKey struct{}
 
-type requestSchemeContextKey struct{}
-
+// The scheme's context key and its fallback live in internal/requestscheme so
+// that web/view can read the same answer when it has to write an absolute URL.
+// web imports web/view, so the shared storage cannot live here.
 const (
-	schemeHTTP  = "http"
-	schemeHTTPS = "https"
+	schemeHTTP  = requestscheme.HTTP
+	schemeHTTPS = requestscheme.HTTPS
 )
 
 // TrustedProxyConfig declares which immediate peers are allowed to speak for
@@ -308,7 +311,7 @@ func TrustedProxy(config TrustedProxyConfig) Middleware {
 				}
 			}
 			ctx := context.WithValue(request.Context(), remoteIPContextKey{}, client)
-			ctx = context.WithValue(ctx, requestSchemeContextKey{}, scheme)
+			ctx = requestscheme.With(ctx, scheme)
 			next.ServeHTTP(response, request.WithContext(ctx))
 		})
 	}
@@ -351,10 +354,7 @@ func forwardedScheme(header string) (string, bool) {
 // observedScheme is the scheme of the connection this process accepted, which
 // is all net/http can determine without being told.
 func observedScheme(request *http.Request) string {
-	if request.TLS != nil {
-		return schemeHTTPS
-	}
-	return schemeHTTP
+	return requestscheme.Observed(request)
 }
 
 // RequestScheme reports the scheme the client used, which behind a
@@ -367,16 +367,11 @@ func observedScheme(request *http.Request) string {
 // TrustedProxy therefore has to run ahead of every middleware that asks, which
 // is why the generated chain places it first. A request that reaches a caller
 // without passing through it is reported as plaintext, and the caller sees an
-// http site: CSRF then refuses the application's own forms, and a redirect
-// check stops requiring HTTPS of its target.
+// http site: CSRF then refuses the application's own forms, a redirect check
+// stops requiring HTTPS of its target, and the absolute URLs view.Render writes
+// into the document head advertise an http origin a scraper may refuse.
 func RequestScheme(request *http.Request) string {
-	if request == nil {
-		return schemeHTTP
-	}
-	if scheme, ok := request.Context().Value(requestSchemeContextKey{}).(string); ok {
-		return scheme
-	}
-	return observedScheme(request)
+	return requestscheme.Of(request)
 }
 
 // RequestIsHTTPS reports whether the client's own connection was encrypted,

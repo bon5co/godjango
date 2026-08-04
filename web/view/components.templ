@@ -5,23 +5,39 @@ package view
 // or <script> in an application component is silently dropped by the browser.
 // Stylesheets and scripts are therefore the supported way for an application to
 // ship its own CSS and JavaScript: same-origin URLs it serves itself, which the
-// policy already allows.
-templ Layout(title string, csrfToken string, stylesheets []string, scripts []string, content templ.Component) {
+// policy already allows. Head metadata arrives the same way -- as data in
+// Document, resolved by Render -- so every value is escaped on the way out and
+// no application string reaches the head as markup.
+templ Layout(document Document, content templ.Component) {
 	<!doctype html>
 	<html lang="en">
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
-			<meta name="csrf-token" content={ csrfToken }/>
-			<title>{ title }</title>
+			<meta name="csrf-token" content={ document.CSRFToken }/>
+			<title>{ document.Title }</title>
+			for _, tag := range document.MetaTags {
+				if tag.Property != "" {
+					<meta property={ tag.Property } content={ tag.Content }/>
+				} else {
+					<meta name={ tag.Name } content={ tag.Content }/>
+				}
+			}
+			for _, link := range document.Links {
+				if link.Type != "" {
+					<link rel={ link.Rel } type={ link.Type } href={ link.Href }/>
+				} else {
+					<link rel={ link.Rel } href={ link.Href }/>
+				}
+			}
 			<link rel="stylesheet" href="/static/godjango/godjango.css"/>
-			for _, stylesheet := range stylesheets {
+			for _, stylesheet := range document.Stylesheets {
 				<link rel="stylesheet" href={ stylesheet }/>
 			}
 			<script defer src="/static/godjango/htmx-2.0.9.min.js"></script>
 			<script defer src="/static/godjango/alpine-3.15.12.min.js"></script>
 			<script defer src="/static/godjango/godjango.js"></script>
-			for _, script := range scripts {
+			for _, script := range document.Scripts {
 				<script defer src={ script }></script>
 			}
 		</head>

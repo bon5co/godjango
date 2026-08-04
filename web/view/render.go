@@ -10,6 +10,18 @@ func Render(response http.ResponseWriter, request *http.Request, options RenderO
 	if options.Content == nil {
 		return errors.New("godjango view: content component is required")
 	}
+	// The head is resolved before a single byte is written, so an unresolvable
+	// og:image or canonical URL fails the whole response and the handler can
+	// serve a 500. Resolving it later would leave a 200 already committed and
+	// the error nowhere but a log.
+	var document Document
+	if !IsHTMX(request) {
+		resolved, err := resolveDocument(request, options)
+		if err != nil {
+			return err
+		}
+		document = resolved
+	}
 	appendVary(response.Header(), "HX-Request")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if options.CachePolicy != "" {
@@ -21,13 +33,7 @@ func Render(response http.ResponseWriter, request *http.Request, options RenderO
 			response.Header().Set("HX-Push-Url", options.PushURL)
 		}
 	} else {
-		component = Layout(
-			options.Title,
-			options.CSRFToken,
-			options.Stylesheets,
-			options.Scripts,
-			component,
-		)
+		component = Layout(document, component)
 	}
 	if options.Status != 0 {
 		response.WriteHeader(options.Status)
