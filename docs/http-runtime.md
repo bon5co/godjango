@@ -12,6 +12,7 @@ complete typed runtime environment before opening a listener:
 - `DEBUG`: optional, default `false`
 - `PORT`: optional, default `8000`
 - `TRUST_PROXY_HEADERS`: optional, default `false`
+- `STATELESS_PATHS`: optional, comma-separated, default empty
 
 Database-only management commands load only `DATABASE_URL`; they do not require
 HTTP settings. `godjango test` loads neither.
@@ -30,6 +31,58 @@ Generated servers declare middleware in source, in this order:
 | 6 | sessions | Load/save an opaque SCS token through PostgreSQL |
 | 7 | CSRF | Masked synchronizer token, same-origin validation, secure cookie |
 | 8 | authentication | Load and validate the session user and auth hash |
+
+Middleware 6, 7 and 8 are wrapped in `StatelessPaths.Exempt` so a deployment
+can declare routes that skip all three. See [Stateless paths](#stateless-paths).
+
+## Stateless paths
+
+The stateful part of the chain is not free, and it is not conditional on the
+caller wanting it. CSRF asks the session for a secret on every request, which
+creates a session for a caller that arrived without one, which writes a row.
+An endpoint serving JSON to programs therefore pays a database round trip and
+stores a session per request, for state nothing in the request or the response
+refers to.
+
+Measured on the development VM against a handler that encodes a 16-byte JSON
+body, 50 connections for 20 seconds:
+
+| chain | throughput | mean latency | session rows written |
+| --- | ---: | ---: | ---: |
+| full middleware | 7,042 req/s | 7.09 ms | 140,890 |
+| stateless prefix | 37,175 req/s | 1.34 ms | 0 |
+| `net/http` alone, no framework | 93,886 req/s | 0.53 ms | 0 |
+
+The row count is the more serious half. Sustained anonymous traffic to a
+stateful route grows the session table without bound, and nothing in the
+request signals that it should.
+
+Declare the exempt prefixes as a comma-separated `STATELESS_PATHS`, which the
+generated server passes to `web.StatelessPaths`:
+
+```
+STATELESS_PATHS=/api,/healthz
+```
+
+A prefix matches a path exactly or at a segment boundary, so `/api` covers
+`/api` and `/api/ping` and does not cover `/apiary`. Prefixes are matched
+against the resolved path, so `/api/../admin` is matched as `/admin` and stays
+stateful. The server refuses to start on a prefix that is empty, does not begin
+at the root, or resolves to `/`, because each of those silently exempts either
+nothing or everything.
+
+**A stateless route is an anonymous route.** Skipping the session middleware
+also skips authentication, so under a stateless prefix `CurrentUser` reports no
+user, `CSRFToken` returns the empty string, and `RequireAuthentication` and
+`RequirePermission` refuse the request. That is the intended failure direction —
+they fail closed — but it means anything a stateless route authorizes has to
+travel in the request itself, as a bearer credential the handler checks. A
+handler mounted both inside and outside a stateless prefix can tell which chain
+it is on with `web.IsStateless`.
+
+Leave `STATELESS_PATHS` unset for an application whose routes are all
+browser-facing. The default is empty, so an existing project keeps today's
+behaviour until it opts in.
 
 ## Reverse proxies
 
