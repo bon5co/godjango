@@ -12,7 +12,7 @@ complete typed runtime environment before opening a listener:
 - `DEBUG`: optional, default `false`
 - `PORT`: optional, default `8000`
 - `TRUST_PROXY_HEADERS`: optional, default `false`
-- `STATELESS_PATHS`: optional, comma-separated, default empty
+- `STATELESS_PATHS`: optional, comma-separated, default `/static`
 
 Database-only management commands load only `DATABASE_URL`; they do not require
 HTTP settings. `godjango test` loads neither.
@@ -49,13 +49,34 @@ body, 50 connections for 20 seconds:
 
 | chain | throughput | mean latency | session rows written |
 | --- | ---: | ---: | ---: |
-| full middleware | 7,042 req/s | 7.09 ms | 140,890 |
-| stateless prefix | 37,175 req/s | 1.34 ms | 0 |
+| session-stored CSRF secret | 7,042 req/s | 7.09 ms | 140,890 |
+| cookie-stored CSRF secret | 29,978 req/s | 1.66 ms | 0 |
+| cookie-stored, stateless prefix | 53,728 req/s | 0.93 ms | 0 |
 | `net/http` alone, no framework | 93,886 req/s | 0.53 ms | 0 |
 
+Concurrency sweep on the same endpoint and box, six seconds per level. The
+load generator shares five cores with the server, so these are a floor:
+
+| connections | stateless JSON | mean | p99 | stateful HTML | mean | p99 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 11,500 req/s | 0.08 ms | 0.14 ms | 8,775 req/s | 0.11 ms | 0.23 ms |
+| 4 | 33,186 req/s | 0.12 ms | 0.71 ms | 24,200 req/s | 0.16 ms | 0.63 ms |
+| 16 | 53,748 req/s | 0.30 ms | 2.54 ms | 29,196 req/s | 0.55 ms | 3.59 ms |
+| 64 | 55,108 req/s | 1.16 ms | 7.30 ms | 29,999 req/s | 2.13 ms | 13.47 ms |
+| 128 | 58,646 req/s | 2.18 ms | 14.60 ms | 32,562 req/s | 3.92 ms | 27.79 ms |
+| 256 | 62,518 req/s | 4.08 ms | 30.00 ms | — | — | — |
+
+Throughput saturates around sixteen connections, which is the point where five
+cores are busy; past it the extra connections buy queueing, not work. Latency
+stays proportional to concurrency rather than collapsing, so the chain has no
+internal contention worth hunting — the remaining gap to bare `net/http` is
+middleware work, not lock waiting.
+
 The row count is the more serious half. Sustained anonymous traffic to a
-stateful route grows the session table without bound, and nothing in the
-request signals that it should.
+stateful route no longer grows the session table, because the CSRF secret it
+used to create one for now lives in a cookie. What a stateless prefix removes
+on top of that is the session load, the CSRF work and the authentication
+lookup, none of which a program calling a JSON endpoint asked for.
 
 Declare the exempt prefixes as a comma-separated `STATELESS_PATHS`, which the
 generated server passes to `web.StatelessPaths`:
@@ -80,9 +101,10 @@ travel in the request itself, as a bearer credential the handler checks. A
 handler mounted both inside and outside a stateless prefix can tell which chain
 it is on with `web.IsStateless`.
 
-Leave `STATELESS_PATHS` unset for an application whose routes are all
-browser-facing. The default is empty, so an existing project keeps today's
-behaviour until it opts in.
+The default is `/static`, because files served from disk authorize nobody and
+loading a session for each one is a database read that changes no byte of the
+response. Add API prefixes alongside it. Setting the variable replaces the
+default rather than adding to it, so keep `/static` in the list.
 
 ## Reverse proxies
 
@@ -151,6 +173,30 @@ Applications implement `Routes(chi.Router)` explicitly. The project registry
 invokes route providers in declared app order. Authorization uses
 `RequireAuthentication` and `RequirePermission`; direct, group, inactive, and
 superuser behavior comes from the auth domain backend.
+
+## Where the CSRF secret lives
+
+The secret behind the masked token is kept in the CSRF cookie by default, and
+in server-side session storage only when `CSRFConfig.UseSessions` is set. This
+is Django's default too, and the reason is cost: a secret that lives in the
+session has to exist before a form can be rendered, so the first anonymous
+request to any page creates a session and writes a row. Anonymous traffic then
+grows the session table without bound, for state no caller ever uses. Measured
+here, twenty seconds of load against one JSON endpoint wrote 140,890 session
+rows and 55 MB.
+
+Both modes mask the secret per response and validate by unmasking it in
+constant time, and both refuse an unsafe request whose `Origin` does not match.
+The cookie mode leans on that `Origin` check for the one thing a plain
+double-submit cookie cannot do on its own: a sibling host that can write
+cookies for the parent domain can plant a secret, but it cannot make a browser
+send a matching `Origin`. An application that shares a registrable domain with
+hosts it does not control, and terminates its own TLS, should set
+`UseSessions` and pay for the storage.
+
+Sessions are still created the moment one is needed — at login — and still
+rotate on login, logout and password change, which rotates the CSRF secret in
+both modes.
 
 ## Sessions and CSRF
 

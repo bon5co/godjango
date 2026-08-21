@@ -551,7 +551,8 @@ type RuntimeSettings struct {
 	// StatelessPaths are the path prefixes served without session, CSRF or
 	// authentication state. Handlers under them always see an anonymous
 	// request, so anything they authorize has to travel in the request
-	// itself. Declared as a comma-separated list, empty by default.
+	// itself. Declared as a comma-separated list, defaulting to the static
+	// files, which need no session to serve. Add API prefixes here.
 	StatelessPaths []string
 }
 
@@ -582,7 +583,10 @@ func LoadRuntimeSettings() (RuntimeSettings, error) {
 		env.Optional("DEBUG", &settings.Debug, false),
 		env.Optional("PORT", &settings.Port, 8000),
 		env.Optional("TRUST_PROXY_HEADERS", &settings.TrustProxyHeaders, false),
-		env.Optional("STATELESS_PATHS", &settings.StatelessPaths, nil),
+		// Static files are served from disk and authorize nobody, so loading
+		// a session for each one is a database read that changes no byte of
+		// the response.
+		env.Optional("STATELESS_PATHS", &settings.StatelessPaths, []string{"/static"}),
 	)
 	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
 		return RuntimeSettings{}, err

@@ -66,7 +66,13 @@ func (backend *fakeAuthBackend) SetPassword(
 
 func TestLoginRejectsUnsafeRedirectAndRotatesSession(t *testing.T) {
 	fixture := newAuthHTTPFixture(t)
-	anonymousCookie := fixture.establishSession(t)
+	// Browsing anonymously must not establish a session. The CSRF secret
+	// lives in its own cookie, so nothing about rendering a login form
+	// requires server-side storage.
+	fixture.csrfToken(t, "/")
+	if cookie := optionalCookie(fixture.client.Jar.Cookies(mustURL(t, fixture.server.URL)), "godjango_session"); cookie != nil {
+		t.Fatal("an anonymous request established a session")
+	}
 	csrfToken := fixture.csrfToken(t, "/accounts/login/")
 
 	response := fixture.postForm(t, "/accounts/login/", url.Values{
@@ -82,8 +88,8 @@ func TestLoginRejectsUnsafeRedirectAndRotatesSession(t *testing.T) {
 		t.Fatalf("location = %q, want /", location)
 	}
 	loginCookie := namedCookie(t, response.Cookies(), "godjango_session")
-	if loginCookie.Value == anonymousCookie.Value {
-		t.Fatal("login did not rotate session cookie")
+	if loginCookie.Value == "" {
+		t.Fatal("login did not establish a session")
 	}
 	response.Body.Close()
 
@@ -521,10 +527,13 @@ func (fixture *authHTTPFixture) postForm(
 	return response
 }
 
-func (fixture *authHTTPFixture) establishSession(t *testing.T) *http.Cookie {
-	t.Helper()
-	fixture.csrfToken(t, "/")
-	return fixture.sessionCookie(t)
+func optionalCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }
 
 func (fixture *authHTTPFixture) sessionCookie(t *testing.T) *http.Cookie {
