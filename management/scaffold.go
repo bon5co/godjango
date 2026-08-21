@@ -154,24 +154,15 @@ func main() {
 	if err != nil {
 		exit(err)
 	}
-	sessions, err := web.NewSessions(web.SessionConfig{
-		CookieName: "godjango_session",
-		Lifetime: 24 * time.Hour,
-		IdleTimeout: 30 * time.Minute,
-		Secure: !settings.Debug,
-	}, sessionStore)
+	sessions, err := web.NewSessions(configuredproject.SessionSettings(settings), sessionStore)
 	if err != nil {
 		exit(err)
 	}
-	csrf, err := web.NewCSRF(web.CSRFConfig{
-		CookieName: "godjango_csrf",
-		Secure: !settings.Debug,
-	})
+	csrf, err := web.NewCSRF(configuredproject.CSRFSettings(settings))
 	if err != nil {
 		exit(err)
 	}
-	stateless := web.StatelessPaths(settings.StatelessPaths)
-	if err := stateless.Validate(); err != nil {
+	if err := configuredproject.StatelessPaths().Validate(); err != nil {
 		exit(err)
 	}
 	sessionSecret := derive(settings.SessionSecret.Reveal(), "session")
@@ -186,23 +177,13 @@ func main() {
 				return auth.Login(web.SessionFromRequest(request), user, sessionSecret)
 			},
 		},
-		Middleware: []web.Middleware{
-			// Decides whether this deployment's forwarding headers can be
-			// believed, before anything reads the client address or scheme.
-			web.TrustedProxy(web.TrustedProxyConfig{
-				TrustAnyPeer: settings.TrustProxyHeaders,
-			}),
-			web.RequestID(),
-			web.Recover(),
-			web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !settings.Debug}),
-			web.BodyLimit(1 << 20),
-			// Session, CSRF and authentication cost a database round trip and
-			// issue a session to every caller that arrives without one. Routes
-			// under a stateless prefix skip all three and are served anonymous.
-			stateless.Exempt(sessions.Middleware),
-			stateless.Exempt(csrf.Middleware),
-			stateless.Exempt(web.Authentication(manager, sessionSecret)),
-		},
+		// The chain and its order live in internal/project/settings.go.
+		Middleware: configuredproject.Middleware(settings, configuredproject.HTTPServices{
+			Sessions: sessions,
+			CSRF: csrf,
+			Users: manager,
+			SessionSecret: sessionSecret,
+		}),
 	})
 	if err != nil {
 		exit(err)
@@ -257,18 +238,7 @@ func exit(err error) {
 	os.Exit(1)
 }
 `,
-		"internal/project/settings.go": fmt.Sprintf(`package project
-
-import gdproject "github.com/bon5co/godjango/project"
-
-type Settings struct{}
-
-func (Settings) Validate() error { return nil }
-
-func Configure() (*gdproject.Project, error) {
-	return gdproject.New(Settings{}, Apps()...)
-}
-`),
+		"internal/project/settings.go": generatedSettingsSource,
 		"internal/project/services.go": generatedServicesSource,
 	}
 	for fileName, content := range files {
@@ -516,29 +486,142 @@ func writeNew(path, content string) error {
 	return file.Close()
 }
 
-const generatedServicesSource = `package project
+// generatedSettingsSource is the project's settings file: the one place a
+// reader looks to learn how this application is assembled. It is the
+// analogue of Django's settings.py, and it is committed on purpose.
+const generatedSettingsSource = `// Package project holds this project's settings.
+//
+// Everything here is source, not environment. How the application is
+// assembled -- which middleware runs and in what order, which paths are
+// served without a session, how long a session lives, how large a request
+// body may be -- is the same in development, in staging and in production,
+// so it belongs in a file that is reviewed, diffed and tested with the code
+// it configures.
+//
+// Only the values that genuinely differ between one deployment and the next
+// are read from the environment, and RuntimeSettings below is the complete
+// list of them: the two secrets, the port, whether this is a debug build,
+// and whether a proxy in front can be believed. If a new setting does not
+// change between deployments, it goes above that struct as a literal rather
+// than becoming another environment variable.
+package project
 
 import (
-	"context"
-	"errors"
-	"fmt"
+	"time"
 
-	"github.com/bon5co/godjango/auth"
-	"github.com/bon5co/godjango/database"
 	"github.com/bon5co/godjango/env"
 	"github.com/bon5co/godjango/management"
-	"github.com/bon5co/godjango/migrations"
+	gdproject "github.com/bon5co/godjango/project"
+	"github.com/bon5co/godjango/web"
 )
 
+// MaxRequestBody is the largest body the server will read, declared and
+// streaming alike.
+const MaxRequestBody = 1 << 20
+
+// StatelessPaths are the path prefixes served without session, CSRF or
+// authentication state.
+//
+// A handler under one of these prefixes always sees an anonymous request:
+// CurrentUser reports no user, CSRFToken is empty, and RequireAuthentication
+// and RequirePermission refuse. They fail closed, so anything a stateless
+// route authorizes has to travel in the request itself.
+//
+// Static files are here because they are served from disk and authorize
+// nobody, so loading a session for each one is a database read that changes
+// no byte of the response. Add API prefixes that serve programs rather than
+// browsers. Adding a prefix removes authentication from those routes, which
+// is exactly why this is a reviewed line of code and not a deployment
+// setting.
+func StatelessPaths() web.StatelessPaths {
+	return web.StatelessPaths{"/static"}
+}
+
+// SessionSettings configure the session cookie and its lifetime.
+func SessionSettings(runtime RuntimeSettings) web.SessionConfig {
+	return web.SessionConfig{
+		CookieName:  "godjango_session",
+		Lifetime:    24 * time.Hour,
+		IdleTimeout: 30 * time.Minute,
+		Secure:      !runtime.Debug,
+	}
+}
+
+// CSRFSettings configure the CSRF cookie.
+//
+// The secret behind the masked token lives in this cookie rather than in
+// server-side session storage, which is Django's default too. Set UseSessions
+// where this application shares a registrable domain with hosts it does not
+// control and terminates its own TLS; it costs a stored session per visitor.
+func CSRFSettings(runtime RuntimeSettings) web.CSRFConfig {
+	return web.CSRFConfig{
+		CookieName: "godjango_csrf",
+		Secure:     !runtime.Debug,
+	}
+}
+
+// HTTPServices are the long-lived pieces the middleware chain is built from.
+type HTTPServices struct {
+	Sessions      *web.Sessions
+	CSRF          *web.CSRF
+	Users         web.AuthBackend
+	SessionSecret []byte
+}
+
+// Middleware is the ordered chain every request passes through, outermost
+// first. It is the analogue of Django's MIDDLEWARE, and the order is part of
+// the security model rather than a preference:
+//
+//  1. trusted proxy resolves the client's real address and scheme, and has to
+//     run before anything reads either
+//  2. request ID preserves an edge ID or generates one
+//  3. recovery converts a panic into a structured error
+//  4. secure headers set CSP, frame, content-type and referrer policy
+//  5. body limit refuses oversized bodies before anything parses them
+//  6. sessions load and save the session token
+//  7. CSRF validates unsafe methods against the session's origin
+//  8. authentication loads and validates the session user
+//
+// The last three are wrapped in StatelessPaths().Exempt, so a request under a
+// stateless prefix skips all three rather than being handed to middleware
+// that has to special-case it.
+func Middleware(runtime RuntimeSettings, services HTTPServices) []web.Middleware {
+	stateless := StatelessPaths()
+	return []web.Middleware{
+		web.TrustedProxy(web.TrustedProxyConfig{TrustAnyPeer: runtime.TrustProxyHeaders}),
+		web.RequestID(),
+		web.Recover(),
+		web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !runtime.Debug}),
+		web.BodyLimit(MaxRequestBody),
+		stateless.Exempt(services.Sessions.Middleware),
+		stateless.Exempt(services.CSRF.Middleware),
+		stateless.Exempt(web.Authentication(services.Users, services.SessionSecret)),
+	}
+}
+
+// Settings is the project-owned configuration contract the app registry
+// validates at startup.
+type Settings struct{}
+
+func (Settings) Validate() error { return nil }
+
+func Configure() (*gdproject.Project, error) {
+	return gdproject.New(Settings{}, Apps()...)
+}
+
+// DatabaseSettings are what a database-only management command needs.
 type DatabaseSettings struct {
 	DatabaseURL env.Secret
 }
 
+// RuntimeSettings are the values that differ between deployments, and the
+// complete list of them. Everything else about this application's assembly
+// is a literal above.
 type RuntimeSettings struct {
-	DatabaseURL  env.Secret
+	DatabaseURL   env.Secret
 	SessionSecret env.Secret
-	Debug       bool
-	Port        int
+	Debug         bool
+	Port          int
 	// TrustProxyHeaders believes X-Forwarded-For and X-Forwarded-Proto from
 	// whatever address connected. Set it where a platform proxy terminates TLS
 	// in front of a port only that proxy can reach (Dokploy, Railway, Fly); with
@@ -547,13 +630,6 @@ type RuntimeSettings struct {
 	// https Origin. Setting it on a port exposed directly to the internet is the
 	// opposite mistake: any client can then name its own address and scheme.
 	TrustProxyHeaders bool
-
-	// StatelessPaths are the path prefixes served without session, CSRF or
-	// authentication state. Handlers under them always see an anonymous
-	// request, so anything they authorize has to travel in the request
-	// itself. Declared as a comma-separated list, defaulting to the static
-	// files, which need no session to serve. Add API prefixes here.
-	StatelessPaths []string
 }
 
 func LoadDatabaseSettings() (DatabaseSettings, error) {
@@ -583,16 +659,26 @@ func LoadRuntimeSettings() (RuntimeSettings, error) {
 		env.Optional("DEBUG", &settings.Debug, false),
 		env.Optional("PORT", &settings.Port, 8000),
 		env.Optional("TRUST_PROXY_HEADERS", &settings.TrustProxyHeaders, false),
-		// Static files are served from disk and authorize nobody, so loading
-		// a session for each one is a database read that changes no byte of
-		// the response.
-		env.Optional("STATELESS_PATHS", &settings.StatelessPaths, []string{"/static"}),
 	)
 	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
 		return RuntimeSettings{}, err
 	}
 	return settings, nil
 }
+`
+
+const generatedServicesSource = `package project
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/bon5co/godjango/auth"
+	"github.com/bon5co/godjango/database"
+	"github.com/bon5co/godjango/management"
+	"github.com/bon5co/godjango/migrations"
+)
 
 func Services() management.ProjectServices {
 	return management.ProjectServices{

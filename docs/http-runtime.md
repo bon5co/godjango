@@ -12,7 +12,6 @@ complete typed runtime environment before opening a listener:
 - `DEBUG`: optional, default `false`
 - `PORT`: optional, default `8000`
 - `TRUST_PROXY_HEADERS`: optional, default `false`
-- `STATELESS_PATHS`: optional, comma-separated, default `/static`
 
 Database-only management commands load only `DATABASE_URL`; they do not require
 HTTP settings. `godjango test` loads neither.
@@ -78,12 +77,21 @@ used to create one for now lives in a cookie. What a stateless prefix removes
 on top of that is the session load, the CSRF work and the authentication
 lookup, none of which a program calling a JSON endpoint asked for.
 
-Declare the exempt prefixes as a comma-separated `STATELESS_PATHS`, which the
-generated server passes to `web.StatelessPaths`:
+Declare the exempt prefixes in `internal/project/settings.go`, alongside the
+middleware chain they modify:
 
+```go
+func StatelessPaths() web.StatelessPaths {
+	return web.StatelessPaths{"/static", "/api"}
+}
 ```
-STATELESS_PATHS=/api,/healthz
-```
+
+They are source rather than an environment variable on purpose. Which paths
+skip authentication does not vary between development and production the way a
+secret or a proxy in front does — it is a fact about the application's own
+routes. It is also a security decision: adding a prefix removes authentication
+from those routes, and that belongs in a line that is reviewed, diffed and
+tested, not in a deployment setting that can be edited with no record.
 
 A prefix matches a path exactly or at a segment boundary, so `/api` covers
 `/api` and `/api/ping` and does not cover `/apiary`. Prefixes are matched
@@ -101,10 +109,9 @@ travel in the request itself, as a bearer credential the handler checks. A
 handler mounted both inside and outside a stateless prefix can tell which chain
 it is on with `web.IsStateless`.
 
-The default is `/static`, because files served from disk authorize nobody and
-loading a session for each one is a database read that changes no byte of the
-response. Add API prefixes alongside it. Setting the variable replaces the
-default rather than adding to it, so keep `/static` in the list.
+A generated project starts with `/static`, because files served from disk
+authorize nobody and loading a session for each one is a database read that
+changes no byte of the response. Add API prefixes alongside it.
 
 ## Reverse proxies
 
