@@ -83,6 +83,24 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 	if !strings.Contains(string(services), "TRUST_PROXY_HEADERS") {
 		t.Error("generated runtime settings do not declare TRUST_PROXY_HEADERS")
 	}
+	// Session, CSRF and authentication each cost a database round trip and
+	// issue a session to any caller arriving without one, so a generated
+	// project has to be able to serve API routes without them.
+	for _, fragment := range []string{
+		"stateless.Exempt(sessions.Middleware)",
+		"stateless.Exempt(csrf.Middleware)",
+		"stateless.Exempt(web.Authentication(manager, sessionSecret))",
+	} {
+		if !strings.Contains(string(server), fragment) {
+			t.Errorf("generated server does not exempt stateless paths from %q", fragment)
+		}
+	}
+	if !strings.Contains(string(server), "stateless.Validate()") {
+		t.Error("generated server does not validate its stateless path prefixes at startup")
+	}
+	if !strings.Contains(string(services), "STATELESS_PATHS") {
+		t.Error("generated runtime settings do not declare STATELESS_PATHS")
+	}
 
 	runGo(t, root, "test", "./...")
 	runGo(t, root, "vet", "./...")

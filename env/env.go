@@ -236,6 +236,18 @@ func parsedAssignment(declaration Declaration, raw string) (func(), error) {
 		parsed.Set(reflect.ValueOf(*value))
 	case target.Kind() == reflect.String:
 		parsed.SetString(raw)
+	case target.Type() == reflect.TypeFor[[]string]():
+		// A comma-separated list, because the values that need it here are
+		// path prefixes and origins, and neither may contain a comma.
+		items := make([]string, 0)
+		for _, item := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			items = append(items, trimmed)
+		}
+		parsed.Set(reflect.ValueOf(items))
 	case target.Kind() == reflect.Bool:
 		value, parseErr := strconv.ParseBool(raw)
 		if parseErr != nil {

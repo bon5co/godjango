@@ -170,6 +170,10 @@ func main() {
 	if err != nil {
 		exit(err)
 	}
+	stateless := web.StatelessPaths(settings.StatelessPaths)
+	if err := stateless.Validate(); err != nil {
+		exit(err)
+	}
 	sessionSecret := derive(settings.SessionSecret.Reveal(), "session")
 	resetSecret := derive(settings.SessionSecret.Reveal(), "password-reset")
 	router, err := web.NewRouter(web.RouterConfig{
@@ -192,9 +196,12 @@ func main() {
 			web.Recover(),
 			web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !settings.Debug}),
 			web.BodyLimit(1 << 20),
-			sessions.Middleware,
-			csrf.Middleware,
-			web.Authentication(manager, sessionSecret),
+			// Session, CSRF and authentication cost a database round trip and
+			// issue a session to every caller that arrives without one. Routes
+			// under a stateless prefix skip all three and are served anonymous.
+			stateless.Exempt(sessions.Middleware),
+			stateless.Exempt(csrf.Middleware),
+			stateless.Exempt(web.Authentication(manager, sessionSecret)),
 		},
 	})
 	if err != nil {
@@ -540,6 +547,12 @@ type RuntimeSettings struct {
 	// https Origin. Setting it on a port exposed directly to the internet is the
 	// opposite mistake: any client can then name its own address and scheme.
 	TrustProxyHeaders bool
+
+	// StatelessPaths are the path prefixes served without session, CSRF or
+	// authentication state. Handlers under them always see an anonymous
+	// request, so anything they authorize has to travel in the request
+	// itself. Declared as a comma-separated list, empty by default.
+	StatelessPaths []string
 }
 
 func LoadDatabaseSettings() (DatabaseSettings, error) {
@@ -569,6 +582,7 @@ func LoadRuntimeSettings() (RuntimeSettings, error) {
 		env.Optional("DEBUG", &settings.Debug, false),
 		env.Optional("PORT", &settings.Port, 8000),
 		env.Optional("TRUST_PROXY_HEADERS", &settings.TrustProxyHeaders, false),
+		env.Optional("STATELESS_PATHS", &settings.StatelessPaths, nil),
 	)
 	if err := schema.Load(env.WithWorkingDirectory(root)); err != nil {
 		return RuntimeSettings{}, err
