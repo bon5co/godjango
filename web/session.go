@@ -132,7 +132,7 @@ func (session *requestSession) Cycle() error {
 	if err := session.manager.RenewToken(session.ctx); err != nil {
 		return err
 	}
-	return rotateCSRFState(session.ctx, session.manager)
+	return rotateCSRFState(session.ctx)
 }
 
 func (session *requestSession) Flush() error {

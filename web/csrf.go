@@ -25,6 +25,27 @@ type CSRFConfig struct {
 	Path       string
 	Secure     bool
 	SameSite   http.SameSite
+
+	// UseSessions keeps the CSRF secret in server-side session storage
+	// instead of in the CSRF cookie.
+	//
+	// The default is the cookie, which is also Django's default, because
+	// the session is the expensive place to put it. A secret that lives in
+	// the session has to exist before a form can be rendered, so the first
+	// anonymous request to any page creates a session and writes a row, and
+	// sustained anonymous traffic grows the session table without bound for
+	// state no caller ever uses. A secret that lives in its own cookie costs
+	// nothing to issue and nothing to store.
+	//
+	// Both modes mask the secret per response and validate by unmasking, and
+	// both refuse an unsafe request whose Origin does not match. The cookie
+	// mode additionally relies on that Origin check to close the gap a plain
+	// double-submit cookie leaves: a sibling host that can write cookies for
+	// the parent domain can plant a secret, but it cannot make the browser
+	// send a matching Origin. Applications that share a registrable domain
+	// with hosts they do not control, and terminate their own TLS, should
+	// set UseSessions and pay the storage.
+	UseSessions bool
 }
 
 type CSRF struct {
@@ -47,47 +68,121 @@ func NewCSRF(config CSRFConfig) (*CSRF, error) {
 type csrfContextKey struct{}
 
 type csrfState struct {
+	secret []byte
+	store  csrfSecretStore
+}
+
+func (state *csrfState) rotate() error {
+	secret, err := randomCSRFSecret()
+	if err != nil {
+		return err
+	}
+	if err := state.store.save(secret); err != nil {
+		return err
+	}
+	state.secret = secret
+	return nil
+}
+
+// csrfSecretStore is where one request's CSRF secret is read from and written
+// back to. It is the only difference between the two modes.
+type csrfSecretStore interface {
+	load() ([]byte, bool)
+	save(secret []byte) error
+}
+
+// sessionCSRFStore keeps the secret in server-side session storage, so saving
+// it marks the session modified and writes a row.
+type sessionCSRFStore struct {
 	manager *scs.SessionManager
 	ctx     context.Context
-	secret  []byte
+}
+
+func (store sessionCSRFStore) load() ([]byte, bool) {
+	if !store.manager.Exists(store.ctx, csrfSessionKey) {
+		return nil, false
+	}
+	secret, err := base64.RawURLEncoding.DecodeString(store.manager.GetString(store.ctx, csrfSessionKey))
+	if err != nil || len(secret) != csrfBytes {
+		return nil, false
+	}
+	return secret, true
+}
+
+func (store sessionCSRFStore) save(secret []byte) error {
+	store.manager.Put(store.ctx, csrfSessionKey, base64.RawURLEncoding.EncodeToString(secret))
+	return nil
+}
+
+// cookieCSRFStore keeps the secret in the CSRF cookie itself, masked the same
+// way the exposed token is. Nothing is stored server-side, so an anonymous
+// request costs no session and no row.
+type cookieCSRFStore struct {
+	request  *http.Request
+	response http.ResponseWriter
+	config   CSRFConfig
+}
+
+func (store cookieCSRFStore) load() ([]byte, bool) {
+	cookie, err := store.request.Cookie(store.config.CookieName)
+	if err != nil || cookie.Value == "" {
+		return nil, false
+	}
+	return unmaskCSRF(cookie.Value)
+}
+
+func (store cookieCSRFStore) save(secret []byte) error {
+	masked, err := maskCSRF(secret)
+	if err != nil {
+		return err
+	}
+	http.SetCookie(store.response, &http.Cookie{
+		Name:     store.config.CookieName,
+		Value:    masked,
+		Path:     store.config.Path,
+		Domain:   store.config.Domain,
+		Secure:   store.config.Secure,
+		HttpOnly: false,
+		SameSite: store.config.SameSite,
+	})
+	return nil
 }
 
 func (csrf *CSRF) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		session := SessionFromRequest(request)
-		current, ok := session.(*requestSession)
-		if !ok {
+		current, _ := SessionFromRequest(request).(*requestSession)
+		if csrf.config.UseSessions && current == nil {
 			WriteError(response, request, http.StatusInternalServerError, "session_unavailable")
 			return
 		}
-		secret, err := ensureCSRFSecret(current.ctx, current.manager)
-		if err != nil {
+
+		var store csrfSecretStore
+		if csrf.config.UseSessions {
+			store = sessionCSRFStore{manager: current.manager, ctx: current.ctx}
+		} else {
+			store = cookieCSRFStore{request: request, response: response, config: csrf.config}
+		}
+
+		secret, found := store.load()
+		state := &csrfState{secret: secret, store: store}
+		if !found {
+			if err := state.rotate(); err != nil {
+				WriteError(response, request, http.StatusInternalServerError, "csrf_unavailable")
+				return
+			}
+		} else if err := store.save(state.secret); err != nil {
+			// Re-issuing the secret refreshes the cookie's mask and its
+			// expiry. In session mode it is the value already stored, so no
+			// row is written.
 			WriteError(response, request, http.StatusInternalServerError, "csrf_unavailable")
 			return
 		}
-		state := &csrfState{
-			manager: current.manager,
-			ctx:     current.ctx,
-			secret:  secret,
-		}
+
 		ctx := context.WithValue(request.Context(), csrfContextKey{}, state)
 		request = request.WithContext(ctx)
-		current.ctx = ctx
-
-		cookieToken, err := maskCSRF(secret)
-		if err != nil {
-			WriteError(response, request, http.StatusInternalServerError, "csrf_unavailable")
-			return
+		if current != nil {
+			current.ctx = ctx
 		}
-		http.SetCookie(response, &http.Cookie{
-			Name:     csrf.config.CookieName,
-			Value:    cookieToken,
-			Path:     csrf.config.Path,
-			Domain:   csrf.config.Domain,
-			Secure:   csrf.config.Secure,
-			HttpOnly: false,
-			SameSite: csrf.config.SameSite,
-		})
 
 		if !safeMethod(request.Method) {
 			if !validRequestOrigin(request) {
@@ -112,7 +207,7 @@ func (csrf *CSRF) Middleware(next http.Handler) http.Handler {
 				}
 				presented = request.PostForm.Get("csrf_token")
 			}
-			if !validCSRFToken(secret, presented) {
+			if !validCSRFToken(state.secret, presented) {
 				WriteError(response, request, http.StatusForbidden, "csrf_failed")
 				return
 			}
@@ -157,32 +252,19 @@ func CSRFToken(request *http.Request) string {
 	return token
 }
 
-func rotateCSRFState(ctx context.Context, manager *scs.SessionManager) error {
-	secret, err := randomCSRFSecret()
-	if err != nil {
-		return err
+// rotateCSRFState issues a new secret for the request in flight. Login,
+// logout and password change call it through Session.Cycle so a secret
+// observed before a privilege change cannot be replayed after one.
+//
+// A request that never reached the CSRF middleware has no state to rotate.
+// That is the case for a stateless path, where there is no CSRF secret to
+// replay either, so rotation succeeds by having nothing to do.
+func rotateCSRFState(ctx context.Context) error {
+	state, ok := ctx.Value(csrfContextKey{}).(*csrfState)
+	if !ok {
+		return nil
 	}
-	manager.Put(ctx, csrfSessionKey, base64.RawURLEncoding.EncodeToString(secret))
-	if state, ok := ctx.Value(csrfContextKey{}).(*csrfState); ok {
-		state.secret = secret
-	}
-	return nil
-}
-
-func ensureCSRFSecret(ctx context.Context, manager *scs.SessionManager) ([]byte, error) {
-	if manager.Exists(ctx, csrfSessionKey) {
-		encoded := manager.GetString(ctx, csrfSessionKey)
-		secret, err := base64.RawURLEncoding.DecodeString(encoded)
-		if err == nil && len(secret) == csrfBytes {
-			return secret, nil
-		}
-	}
-	secret, err := randomCSRFSecret()
-	if err != nil {
-		return nil, err
-	}
-	manager.Put(ctx, csrfSessionKey, base64.RawURLEncoding.EncodeToString(secret))
-	return secret, nil
+	return state.rotate()
 }
 
 func randomCSRFSecret() ([]byte, error) {
