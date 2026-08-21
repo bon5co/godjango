@@ -66,40 +66,46 @@ func TestStartProjectCreatesBuildablePinnedProject(t *testing.T) {
 			t.Errorf("generated server missing runtime dependency %q", fragment)
 		}
 	}
-	// Without this middleware the generated application cannot learn that a
-	// proxy terminated TLS in front of it, and every POST form it serves is
-	// refused as cross-origin once it is deployed.
-	trustedProxy := strings.Index(string(server), "web.TrustedProxy(web.TrustedProxyConfig{")
-	if trustedProxy < 0 {
-		t.Error("generated server does not decide whether to trust forwarding headers")
-	}
-	if csrf := strings.Index(string(server), "csrf.Middleware"); trustedProxy > csrf {
-		t.Error("generated server resolves the request scheme after CSRF reads it")
-	}
-	services, err := os.ReadFile(filepath.Join(root, "internal", "project", "services.go"))
+	// How the application is assembled belongs in the settings file, where it
+	// is reviewed, diffed and tested alongside the code it configures, not in
+	// the environment. Which paths skip authentication is the clearest case:
+	// it is a security decision, and an environment variable carries no diff.
+	projectSettings, err := os.ReadFile(filepath.Join(root, "internal", "project", "settings.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(services), "TRUST_PROXY_HEADERS") {
-		t.Error("generated runtime settings do not declare TRUST_PROXY_HEADERS")
-	}
-	// Session, CSRF and authentication each cost a database round trip and
-	// issue a session to any caller arriving without one, so a generated
-	// project has to be able to serve API routes without them.
+	settingsSource := string(projectSettings)
 	for _, fragment := range []string{
-		"stateless.Exempt(sessions.Middleware)",
-		"stateless.Exempt(csrf.Middleware)",
-		"stateless.Exempt(web.Authentication(manager, sessionSecret))",
+		"func StatelessPaths() web.StatelessPaths",
+		"func Middleware(runtime RuntimeSettings, services HTTPServices) []web.Middleware",
+		"stateless.Exempt(services.Sessions.Middleware)",
+		"stateless.Exempt(services.CSRF.Middleware)",
+		"stateless.Exempt(web.Authentication(services.Users, services.SessionSecret))",
+		"TRUST_PROXY_HEADERS",
 	} {
-		if !strings.Contains(string(server), fragment) {
-			t.Errorf("generated server does not exempt stateless paths from %q", fragment)
+		if !strings.Contains(settingsSource, fragment) {
+			t.Errorf("generated settings missing %q", fragment)
 		}
 	}
-	if !strings.Contains(string(server), "stateless.Validate()") {
-		t.Error("generated server does not validate its stateless path prefixes at startup")
+	if strings.Contains(settingsSource, "STATELESS_PATHS") {
+		t.Error("stateless paths are read from the environment instead of source")
 	}
-	if !strings.Contains(string(services), "STATELESS_PATHS") {
-		t.Error("generated runtime settings do not declare STATELESS_PATHS")
+	// Without this middleware the generated application cannot learn that a
+	// proxy terminated TLS in front of it, and every POST form it serves is
+	// refused as cross-origin once it is deployed. It has to resolve the
+	// scheme before CSRF reads it.
+	trustedProxy := strings.Index(settingsSource, "web.TrustedProxy(web.TrustedProxyConfig{")
+	if trustedProxy < 0 {
+		t.Error("generated settings do not decide whether to trust forwarding headers")
+	}
+	if csrf := strings.Index(settingsSource, "services.CSRF.Middleware"); trustedProxy > csrf {
+		t.Error("generated settings resolve the request scheme after CSRF reads it")
+	}
+	if !strings.Contains(string(server), "configuredproject.Middleware(settings") {
+		t.Error("generated server does not take its middleware chain from the settings file")
+	}
+	if !strings.Contains(string(server), "configuredproject.StatelessPaths().Validate()") {
+		t.Error("generated server does not validate its stateless path prefixes at startup")
 	}
 
 	runGo(t, root, "test", "./...")
