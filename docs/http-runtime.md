@@ -262,3 +262,68 @@ project process.
 Security-sensitive integration tests use isolated real PostgreSQL schemas and
 verify login, session rotation, password change, logout, row counts, and usable
 password hashes.
+
+## Body limits by route family
+
+`BodyLimit(n)` is one number for the whole application, and for most
+applications one number is right: a form that can post twenty megabytes is a
+denial-of-service surface with no purpose, and 1 MiB is a generous form.
+
+What one number cannot express is an application whose HTML pages want that
+ceiling and whose upload endpoint has to accept far more — an image API, a
+document importer, an attachment route. Raising the single limit for those
+raises it for the login form too. Django has the same shape of setting in
+`DATA_UPLOAD_MAX_MEMORY_SIZE` and the same gap, and applications that need a
+larger body on one view end up bypassing the check rather than varying it.
+
+`BodyLimits` keeps the check and varies the number. It lives in
+`internal/project/settings.go` beside the middleware chain it belongs to,
+because which routes may accept a large upload is a fact about the application
+rather than a deployment setting:
+
+```go
+func RequestBodyLimits() web.BodyLimits {
+	return web.BodyLimits{
+		Default:  MaxRequestBody,
+		ByPrefix: map[string]int64{"/api/uploads": 22 << 20},
+	}
+}
+```
+
+and in the chain:
+
+```go
+RequestBodyLimits().Middleware(),
+```
+
+Prefixes match exactly or at a segment boundary, the same rule
+[stateless paths](#stateless-paths) use, so `/api` covers `/api/uploads` and
+does not cover `/apiary`. The path is cleaned before matching, so
+`/api/uploads/../../admin` is matched as `/admin` and keeps the default limit.
+When two prefixes both match, the longer one wins, so a general `/api` rule can
+be narrowed by a specific `/api/uploads` one and map ordering never decides
+which applies.
+
+A declared `Content-Length` over the limit is refused before a byte is read; a
+body that declares no length is capped by the reader, so a chunked request
+cannot walk past the limit either.
+
+`Reject` writes the refusal and is told which limit was exceeded. Left nil it
+is the framework's own answer — 413 with the `body_too_large` code, the same one
+`BodyLimit` writes. An application serving somebody else's wire contract
+supplies its own, because a caller migrating from that contract parses the error
+body it already knows:
+
+```go
+Reject: func(response http.ResponseWriter, request *http.Request, limit int64) {
+	// answer in the contract this application replaces
+},
+```
+
+`Validate` refuses a configuration that cannot mean what it says — a zero or
+negative limit, a prefix that does not start at the root — and `Middleware`
+panics on one rather than serving it, because a limit of zero rejects every
+request with a body and looks like an application bug from every angle except
+the line that caused it. `LimitFor(path)` answers what applies where, for an
+error message or a docs page that has to state the ceiling without restating the
+configuration.

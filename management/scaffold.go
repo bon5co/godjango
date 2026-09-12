@@ -519,6 +519,20 @@ import (
 // streaming alike.
 const MaxRequestBody = 1 << 20
 
+// RequestBodyLimits is the body limit, by route family.
+//
+// One number is right for most applications, and MaxRequestBody is it. An
+// application with an upload endpoint raises the ceiling on that prefix alone
+// rather than raising it for the login form too:
+//
+//	ByPrefix: map[string]int64{"/api/uploads": 22 << 20},
+//
+// The longest matching prefix wins, and Reject lets an application serving
+// somebody else's wire contract answer a refusal in that contract's shape.
+func RequestBodyLimits() web.BodyLimits {
+	return web.BodyLimits{Default: MaxRequestBody}
+}
+
 // StatelessPaths are the path prefixes served without session, CSRF or
 // authentication state.
 //
@@ -592,7 +606,7 @@ func Middleware(runtime RuntimeSettings, services HTTPServices) []web.Middleware
 		web.RequestID(),
 		web.Recover(),
 		web.SecurityHeaders(web.SecurityHeadersConfig{HTTPS: !runtime.Debug}),
-		web.BodyLimit(MaxRequestBody),
+		RequestBodyLimits().Middleware(),
 		stateless.Exempt(services.Sessions.Middleware),
 		stateless.Exempt(services.CSRF.Middleware),
 		stateless.Exempt(web.Authentication(services.Users, services.SessionSecret)),
