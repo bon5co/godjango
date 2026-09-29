@@ -73,7 +73,7 @@ func TestDatabaseShellDelegatesToSQLite(t *testing.T) {
 	}
 	t.Setenv("PATH", directory)
 	var output bytes.Buffer
-	err = RunDatabaseShell(context.Background(), "sqlite:./books.sqlite", []string{"--", "select 1"}, Streams{Out: &output, Err: &output})
+	err = RunDatabaseShellForDriver(context.Background(), "sqlite", "sqlite:./books.sqlite", []string{"--", "select 1"}, Streams{Out: &output, Err: &output})
 	if err != nil {
 		t.Fatal(err)
 	}

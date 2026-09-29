@@ -1,3 +1,5 @@
+//go:build sqlite_integration
+
 package auth_test
 
 import (
@@ -19,7 +21,7 @@ func (sqliteSettings) Validate() error { return nil }
 func TestSQLiteAuthAndSessionsPersistAcrossReopen(t *testing.T) {
 	ctx := context.Background()
 	dsn := "sqlite:" + filepath.Join(t.TempDir(), "auth.sqlite")
-	db, err := database.Open(ctx, database.DefaultConfig(dsn))
+	db, err := database.Open(ctx, database.DefaultSQLiteConfig(dsn))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +54,12 @@ func TestSQLiteAuthAndSessionsPersistAcrossReopen(t *testing.T) {
 	if user.ID == "" {
 		t.Fatal("empty user ID")
 	}
+	if err := store.RunInTx(ctx, func(ctx context.Context, txStore *auth.BunStore) error {
+		_, err := auth.NewManager(txStore, auth.NewPasswordHasher()).CreateUser(ctx, auth.CreateUserOptions{Username: "in_tx", Password: &password})
+		return err
+	}); err != nil {
+		t.Fatalf("SQLite auth transaction: %v", err)
+	}
 	if err := store.CreateGroup(ctx, "admins"); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +78,7 @@ func TestSQLiteAuthAndSessionsPersistAcrossReopen(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := database.Open(ctx, database.DefaultConfig(dsn))
+	reopened, err := database.Open(ctx, database.DefaultSQLiteConfig(dsn))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +100,12 @@ func TestSQLiteAuthAndSessionsPersistAcrossReopen(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("persisted rows = %d", count)
+	}
+	var storageType string
+	if err := reopened.Bun().NewRaw("SELECT typeof(date_joined) FROM auth_users WHERE id = ?", user.ID).Scan(ctx, &storageType); err != nil {
+		t.Fatal(err)
+	}
+	if storageType != "text" {
+		t.Fatalf("date_joined storage = %q, want text", storageType)
 	}
 }

@@ -26,6 +26,18 @@ func TestStartProjectSQLiteMigratesWithoutDatabaseURL(t *testing.T) {
 	if !strings.Contains(string(settings), `env.Secret("sqlite:./db.sqlite")`) {
 		t.Fatal("SQLite default missing")
 	}
+	for _, path := range []string{"cmd/server/main.go", "internal/project/services.go"} {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), "database.DefaultSQLiteConfig(") {
+			t.Fatalf("%s does not select SQLite driver", path)
+		}
+		if path == "internal/project/services.go" && !strings.Contains(string(content), `management.RunDatabaseShellForDriver(ctx, "sqlite",`) {
+			t.Fatal("SQLite shell driver not selected")
+		}
+	}
 	command := exec.Command("go", "run", "./cmd/manage", "migrate")
 	command.Dir = root
 	for _, item := range os.Environ() {

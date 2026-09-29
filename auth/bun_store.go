@@ -17,7 +17,7 @@ type appConfig struct{}
 
 func (appConfig) Name() string { return "auth" }
 
-//go:embed migrations/*.sql sqlite_migrations/*.sql
+//go:embed migrations/*.sql
 var authMigrationFiles embed.FS
 
 func (appConfig) MigrationFS() fs.FS {
@@ -26,17 +26,6 @@ func (appConfig) MigrationFS() fs.FS {
 		panic(err)
 	}
 	return files
-}
-
-func (appConfig) MigrationFSForDialect(dialect string) fs.FS {
-	if dialect == "sqlite" {
-		files, err := fs.Sub(authMigrationFiles, "sqlite_migrations")
-		if err != nil {
-			panic(err)
-		}
-		return files
-	}
-	return App.MigrationFS()
 }
 
 // App registers default auth migrations with a project.
@@ -308,7 +297,7 @@ func (store *BunStore) RunInTx(
 	fn func(context.Context, *BunStore) error,
 ) error {
 	return store.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return fn(ctx, &BunStore{db: store.db, idb: tx})
+		return fn(ctx, &BunStore{db: store.db, idb: tx, dialect: store.dialect})
 	})
 }
 

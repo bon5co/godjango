@@ -88,9 +88,9 @@ failed-transaction cleanup, pending status, and concurrent lock rejection.
 
 ## Dialect-specific SQL
 
-`migrations.CollectForDialect(project, db.Dialect())` selects an app's
-`MigrationFSForDialect(string) fs.FS` when implemented; otherwise it uses
-`MigrationFS()`. The built-in auth app has separate PostgreSQL and SQLite SQL.
-App migrations that use portable SQL may keep only `MigrationFS()`. Dialect
-variants must keep the same timestamp identity and paired up/down files when
-an app is expected to migrate on both backends.
+`migrations.CollectForDialect(project, db.Dialect())` selects a per-file dialect
+variant such as `20260731033456_add_books.sqlite.up.sql` before falling back to
+`20260731033456_add_books.tx.up.sql`. Selection is independent for up and down
+files, so one side may use shared SQL. Bun runs the selected SQL in a
+transaction. The built-in auth app uses SQLite variants and shared PostgreSQL
+files; portable app migrations need only the shared pair.

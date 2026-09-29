@@ -15,15 +15,28 @@ func RunDatabaseShell(
 	args []string,
 	streams Streams,
 ) error {
+	return RunDatabaseShellForDriver(ctx, "postgres", dsn, args, streams)
+}
+
+func RunDatabaseShellForDriver(
+	ctx context.Context,
+	driver string,
+	dsn string,
+	args []string,
+	streams Streams,
+) error {
 	if dsn == "" {
 		return errors.New("godjango dbshell: database URL is required")
+	}
+	if driver != "postgres" && driver != "sqlite" {
+		return fmt.Errorf("godjango dbshell: unsupported driver %q", driver)
 	}
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
 	program := "psql"
 	connection := dsn
-	if strings.HasPrefix(dsn, "sqlite:") {
+	if driver == "sqlite" {
 		program = "sqlite3"
 		connection = strings.TrimPrefix(dsn, "sqlite:")
 		if strings.HasPrefix(connection, "///") {

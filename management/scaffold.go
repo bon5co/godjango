@@ -246,6 +246,10 @@ func exit(err error) {
 		"internal/project/services.go": generatedServicesSource,
 	}
 	for fileName, content := range files {
+		if scaffolder.Database == "sqlite" {
+			content = strings.ReplaceAll(content, "database.DefaultConfig(", "database.DefaultSQLiteConfig(")
+			content = strings.ReplaceAll(content, "management.RunDatabaseShell(ctx,", `management.RunDatabaseShellForDriver(ctx, "sqlite",`)
+		}
 		if scaffolder.Database == "sqlite" && fileName == "internal/project/settings.go" {
 			content = strings.ReplaceAll(content,
 				`env.Required("DATABASE_URL", &settings.DatabaseURL)`,

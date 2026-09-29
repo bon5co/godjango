@@ -57,6 +57,9 @@ case "$gate" in
     require_database
     go test -tags=integration -count=1 ./...
     ;;
+  sqlite-integration)
+    go test -tags=sqlite_integration -count=1 ./database ./migrations ./auth ./management
+    ;;
   e2e)
     require_database
     if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
@@ -66,7 +69,7 @@ case "$gate" in
     go test -tags=e2e -count=1 -v ./e2e
     ;;
   *)
-    echo "usage: scripts/ci.sh {format|dependencies|licenses|build|vet|race|generated|integration|e2e}" >&2
+    echo "usage: scripts/ci.sh {format|dependencies|licenses|build|vet|race|generated|integration|sqlite-integration|e2e}" >&2
     exit 2
     ;;
 esac

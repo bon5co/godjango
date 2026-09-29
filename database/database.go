@@ -25,6 +25,7 @@ var (
 )
 
 type Config struct {
+	Driver          string
 	DSN             string
 	MaxOpenConns    int
 	ConnMaxIdleTime time.Duration
@@ -33,17 +34,21 @@ type Config struct {
 }
 
 func DefaultConfig(dsn string) Config {
-	maxOpen := 25
-	if strings.HasPrefix(dsn, "sqlite:") {
-		maxOpen = 1
-	}
 	return Config{
+		Driver:          "postgres",
 		DSN:             dsn,
-		MaxOpenConns:    maxOpen,
+		MaxOpenConns:    25,
 		ConnMaxIdleTime: 30 * time.Second,
 		ConnMaxLifetime: 30 * time.Minute,
 		PingTimeout:     5 * time.Second,
 	}
+}
+
+func DefaultSQLiteConfig(dsn string) Config {
+	config := DefaultConfig(dsn)
+	config.Driver = "sqlite"
+	config.MaxOpenConns = 1
+	return config
 }
 
 type DB struct {
@@ -61,7 +66,7 @@ func Open(ctx context.Context, config Config) (*DB, error) {
 	if err := validate(config); err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(config.DSN, "sqlite:") {
+	if config.Driver == "sqlite" {
 		return openSQLite(ctx, config)
 	}
 
@@ -109,7 +114,7 @@ func openSQLite(ctx context.Context, config Config) (*DB, error) {
 	if strings.Contains(dsn, "?") {
 		separator = "&"
 	}
-	dsn += separator + "_foreign_keys=on"
+	dsn += separator + "_foreign_keys=on&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConnect, err)
@@ -157,6 +162,8 @@ func RunInTx(
 
 func validate(config Config) error {
 	switch {
+	case config.Driver != "" && config.Driver != "postgres" && config.Driver != "sqlite":
+		return fmt.Errorf("%w: Driver must be postgres or sqlite", ErrInvalidConfig)
 	case config.DSN == "":
 		return fmt.Errorf("%w: DSN is required", ErrInvalidConfig)
 	case config.MaxOpenConns <= 0 || config.MaxOpenConns > math.MaxInt32:

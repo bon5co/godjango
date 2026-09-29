@@ -72,7 +72,7 @@ query uses a healthy replacement connection.
 
 ## SQLite
 
-For a local file, use `database.DefaultConfig("sqlite:./db.sqlite")` or an
+For a local file, use `database.DefaultSQLiteConfig("sqlite:./db.sqlite")` or an
 absolute path such as `sqlite:///var/lib/example/app.sqlite`. The framework
 uses the pure Go `modernc.org/sqlite` driver with Bun's SQLite dialect. SQLite
 defaults to one connection for predictable local write serialization. The

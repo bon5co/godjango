@@ -86,6 +86,8 @@ jobs:
       - run: mkdir -p test-results/logs
       - name: Generated-project smoke tests
         run: scripts/ci.sh generated 2>&1 | tee test-results/logs/generated.log
+      - name: SQLite integration tests
+        run: scripts/ci.sh sqlite-integration 2>&1 | tee test-results/logs/sqlite-integration.log
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

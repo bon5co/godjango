@@ -66,9 +66,10 @@ identity fields; `--noinput` instead requires flags or the corresponding
 `GODJANGO_SUPERUSER_*` variables.
 
 Database, migration, auth, shell, and server services load lazily. `test` and
-source-only commands do not open PostgreSQL. Database-owning commands always
+source-only commands do not open a database. Database-owning commands always
 close their pool before returning. Generated runtime settings declare
-`DATABASE_URL` as required, with `DEBUG=false`, `PORT=8000` and
+`DATABASE_URL` as required for PostgreSQL projects and defaulting to
+`sqlite:./db.sqlite` for SQLite projects, with `DEBUG=false`, `PORT=8000` and
 `TRUST_PROXY_HEADERS=false` as explicit optional defaults; a missing required
 value fails before the server listens or a database command begins.
 
