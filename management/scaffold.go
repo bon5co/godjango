@@ -17,12 +17,16 @@ var scaffoldIdentifier = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 type Scaffolder struct {
 	FrameworkVersion string
+	Database         string
 	// FrameworkReplace is intended for framework development and tests. Normal
 	// generated projects pin FrameworkVersion without a replace directive.
 	FrameworkReplace string
 }
 
 func (scaffolder Scaffolder) StartProject(ctx context.Context, parent, name string) (root string, resultErr error) {
+	if scaffolder.Database != "" && scaffolder.Database != "postgres" && scaffolder.Database != "sqlite" {
+		return "", fmt.Errorf("godjango startproject: unsupported database %q", scaffolder.Database)
+	}
 	if !scaffoldIdentifier.MatchString(name) {
 		return "", fmt.Errorf("godjango startproject: invalid project name %q", name)
 	}
@@ -242,6 +246,15 @@ func exit(err error) {
 		"internal/project/services.go": generatedServicesSource,
 	}
 	for fileName, content := range files {
+		if scaffolder.Database == "sqlite" {
+			content = strings.ReplaceAll(content, "database.DefaultConfig(", "database.DefaultSQLiteConfig(")
+			content = strings.ReplaceAll(content, "management.RunDatabaseShell(ctx,", `management.RunDatabaseShellForDriver(ctx, "sqlite",`)
+		}
+		if scaffolder.Database == "sqlite" && fileName == "internal/project/settings.go" {
+			content = strings.ReplaceAll(content,
+				`env.Required("DATABASE_URL", &settings.DatabaseURL)`,
+				`env.Optional("DATABASE_URL", &settings.DatabaseURL, env.Secret("sqlite:./db.sqlite"))`)
+		}
 		content = strings.ReplaceAll(content, "PROJECT_MODULE", name)
 		if strings.HasSuffix(fileName, ".go") {
 			formatted, err := format.Source([]byte(content))
@@ -758,7 +771,7 @@ func openMigrations(
 	if err != nil {
 		return nil, nil, errors.Join(err, db.Close())
 	}
-	catalog, err := migrations.Collect(configured)
+	catalog, err := migrations.CollectForDialect(configured, db.Dialect())
 	if err != nil {
 		return nil, nil, errors.Join(err, db.Close())
 	}

@@ -10,6 +10,7 @@ scripts/ci.sh build
 scripts/ci.sh vet
 scripts/ci.sh race
 scripts/ci.sh generated
+scripts/ci.sh sqlite-integration
 
 GODJANGO_TEST_DATABASE_URL=postgres://... scripts/ci.sh integration
 GODJANGO_TEST_DATABASE_URL=postgres://... DISPLAY=:99 scripts/ci.sh e2e

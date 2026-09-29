@@ -5,7 +5,7 @@ Django-inspired, batteries-included web framework for idiomatic Go.
 Planned stack:
 
 - Go `net/http`
-- Bun over PostgreSQL
+- Bun over PostgreSQL or SQLite
 - templ
 - HTMX
 - Alpine.js
@@ -30,13 +30,13 @@ Application configuration uses explicit, typed environment declarations. See
 Projects use validated settings and an explicit ordered app registry. See
 [project settings and apps](docs/projects.md).
 
-Bun/PostgreSQL connections use a validated, bounded, Railway-safe lifecycle.
+Bun connections support PostgreSQL and pure-Go SQLite with explicit drivers.
 See [database lifecycle](docs/database.md).
 
 Schema changes use explicit, paired, transactional Bun SQL migrations. See
 [explicit migrations](docs/migrations.md).
 
-The default user, group, permission, and session store is PostgreSQL-backed
+The default user, group, permission, and session store works on both databases
 without exposing Bun through auth domain APIs. See
 [auth persistence](docs/auth-persistence.md).
 
@@ -45,7 +45,7 @@ and a compiled project-local manager. `godjango test` runs only the ordinary Go
 unit suite by default. See [management CLI](docs/management-cli.md).
 
 The `net/http` runtime now provides explicit Chi routes, secure middleware,
-PostgreSQL-backed rotating SCS sessions, masked CSRF, forms, authorization, and
+database-backed rotating SCS sessions, masked CSRF, forms, authorization, and
 complete login/logout/password flows. See [HTTP runtime](docs/http-runtime.md).
 
 The view layer renders shared templ components as full pages or HTMX fragments,

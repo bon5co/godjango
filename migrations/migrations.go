@@ -26,7 +26,7 @@ var (
 
 var (
 	fileNamePattern = regexp.MustCompile(
-		`^(\d{14})_([0-9a-z_-]+)\.tx\.(up|down)\.sql$`,
+		`^(\d{14})_([0-9a-z_-]+)(?:\.(postgres|sqlite))?(?:\.tx)?\.(up|down)\.sql$`,
 	)
 	scaffoldNamePattern = regexp.MustCompile(`^[0-9a-z][0-9a-z_-]*$`)
 )
@@ -42,14 +42,21 @@ type Catalog struct {
 }
 
 func Collect(configured *project.Project) (*Catalog, error) {
+	return CollectForDialect(configured, "postgres")
+}
+
+func CollectForDialect(configured *project.Project, dialect string) (*Catalog, error) {
 	if configured == nil {
 		return nil, fmt.Errorf("%w: project is nil", ErrInvalidCatalog)
 	}
+	if dialect != "postgres" && dialect != "sqlite" {
+		return nil, fmt.Errorf("%w: unsupported dialect %q", ErrInvalidCatalog, dialect)
+	}
 
 	type pair struct {
-		name string
-		up   bool
-		down bool
+		name  string
+		app   string
+		files map[string][]byte
 	}
 	pairs := make(map[string]*pair)
 	combined := make(fstest.MapFS)
@@ -86,7 +93,7 @@ func Collect(configured *project.Project) (*Catalog, error) {
 			identity := matches[1]
 			name := identity + "_" + matches[2]
 			current, exists := pairs[identity]
-			if exists && current.name != name {
+			if exists && (current.name != name || current.app != app.Name()) {
 				return fmt.Errorf(
 					"%w: migration identity %s is duplicated by %s and %s",
 					ErrInvalidCatalog,
@@ -96,26 +103,20 @@ func Collect(configured *project.Project) (*Catalog, error) {
 				)
 			}
 			if !exists {
-				current = &pair{name: name}
+				current = &pair{name: name, app: app.Name(), files: make(map[string][]byte)}
 				pairs[identity] = current
 			}
-			switch matches[3] {
-			case "up":
-				if current.up {
-					return fmt.Errorf("%w: duplicate up migration %s", ErrInvalidCatalog, name)
-				}
-				current.up = true
-			case "down":
-				if current.down {
-					return fmt.Errorf("%w: duplicate down migration %s", ErrInvalidCatalog, name)
-				}
-				current.down = true
+			variant := matches[3]
+			direction := matches[4]
+			key := variant + "/" + direction
+			if _, exists := current.files[key]; exists {
+				return fmt.Errorf("%w: duplicate %s migration %s", ErrInvalidCatalog, key, name)
 			}
 			content, err := fs.ReadFile(appFS, path)
 			if err != nil {
 				return err
 			}
-			combined[app.Name()+"/"+base] = &fstest.MapFile{Data: content, Mode: 0o644}
+			current.files[key] = content
 			return nil
 		})
 		if err != nil {
@@ -125,12 +126,16 @@ func Collect(configured *project.Project) (*Catalog, error) {
 
 	names := make([]string, 0, len(pairs))
 	for _, pair := range pairs {
-		if !pair.up || !pair.down {
-			return nil, fmt.Errorf(
-				"%w: migration %s requires both up and down files",
-				ErrInvalidCatalog,
-				pair.name,
-			)
+		for _, direction := range []string{"up", "down"} {
+			content, ok := pair.files[dialect+"/"+direction]
+			if !ok {
+				content, ok = pair.files["/"+direction]
+			}
+			if !ok {
+				return nil, fmt.Errorf("%w: migration %s requires %s SQL for %s", ErrInvalidCatalog, pair.name, direction, dialect)
+			}
+			base := pair.name + ".tx." + direction + ".sql"
+			combined[pair.app+"/"+base] = &fstest.MapFile{Data: content, Mode: 0o644}
 		}
 		names = append(names, pair.name)
 	}

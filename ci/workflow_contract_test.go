@@ -29,6 +29,7 @@ func TestWorkflowPinsToolsAndExposesEveryRequiredGate(t *testing.T) {
 		"scripts/ci.sh race",
 		"scripts/ci.sh generated",
 		"scripts/ci.sh integration",
+		"scripts/ci.sh sqlite-integration",
 		"scripts/ci.sh e2e",
 		"if: failure()",
 		"test-results/auth-e2e/",

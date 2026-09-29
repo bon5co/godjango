@@ -27,9 +27,15 @@ case "$gate" in
     go mod verify
     ;;
   licenses)
+    # go-licenses does not classify mathutil's BSD-3-Clause text, even though
+    # its module contains a LICENSE. Check the exact notice separately.
+    go mod download modernc.org/mathutil
+    mathutil_dir="$(go list -m -f '{{.Dir}}' modernc.org/mathutil)"
+    cmp scripts/licenses/mathutil.LICENSE "$mathutil_dir/LICENSE"
     GOFLAGS="-tags=e2e" go run github.com/google/go-licenses@v1.6.0 \
       check ./... \
       --ignore github.com/bon5co/godjango \
+      --ignore modernc.org/mathutil \
       --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause
     ;;
   build)
@@ -51,6 +57,9 @@ case "$gate" in
     require_database
     go test -tags=integration -count=1 ./...
     ;;
+  sqlite-integration)
+    go test -tags=sqlite_integration -count=1 ./database ./migrations ./auth ./management
+    ;;
   e2e)
     require_database
     if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
@@ -60,7 +69,7 @@ case "$gate" in
     go test -tags=e2e -count=1 -v ./e2e
     ;;
   *)
-    echo "usage: scripts/ci.sh {format|dependencies|licenses|build|vet|race|generated|integration|e2e}" >&2
+    echo "usage: scripts/ci.sh {format|dependencies|licenses|build|vet|race|generated|integration|sqlite-integration|e2e}" >&2
     exit 2
     ;;
 esac

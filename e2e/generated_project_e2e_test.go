@@ -157,11 +157,9 @@ func TestGeneratedProjectProductionBrowserFlows(t *testing.T) {
 	click(t, browser, `button[type="submit"]`)
 	waitText(t, browser, "Anonymous")
 	screenshot(t, browser, results, "04-logged-out.png")
-	requireSessionRows(t, ctx, admin, 1, "logout")
-	sessionAfterLogout := sessionKeys(t, ctx, admin)
-	if sessionBeforeLogout[0] == sessionAfterLogout[0] {
-		t.Fatal("logout did not replace the authenticated session")
-	}
+	// Destroy removes the authenticated row. Anonymous requests use the CSRF
+	// cookie and do not create a server-side session.
+	requireSessionRows(t, ctx, admin, 0, "logout")
 
 	click(t, browser, `a[href="/accounts/login/"]`)
 	wait(t, browser, `form[action="/accounts/login/"]`)
@@ -176,6 +174,10 @@ func TestGeneratedProjectProductionBrowserFlows(t *testing.T) {
 	click(t, browser, `button[type="submit"]`)
 	waitText(t, browser, "Signed in as alice")
 	screenshot(t, browser, results, "06-login-success.png")
+	requireSessionRows(t, ctx, admin, 1, "login after logout")
+	if sessionBeforeLogout[0] == sessionKeys(t, ctx, admin)[0] {
+		t.Fatal("login after logout reused the destroyed session")
+	}
 
 	second, stopSecond := startBrowser(t)
 	defer stopSecond()

@@ -60,3 +60,24 @@ func TestDatabaseShellDelegatesToPsqlAndPreservesStatus(t *testing.T) {
 		t.Fatalf("error leaked DSN: %v", err)
 	}
 }
+
+func TestDatabaseShellDelegatesToSQLite(t *testing.T) {
+	directory := t.TempDir()
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlite := filepath.Join(directory, "sqlite3")
+	if err := os.WriteFile(sqlite, []byte("#!"+shell+"\nprintf '%s\\n' \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	var output bytes.Buffer
+	err = RunDatabaseShellForDriver(context.Background(), "sqlite", "sqlite:./books.sqlite", []string{"--", "select 1"}, Streams{Out: &output, Err: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "./books.sqlite\nselect 1\n" {
+		t.Fatalf("sqlite3 args = %q", output.String())
+	}
+}

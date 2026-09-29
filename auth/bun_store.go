@@ -9,6 +9,7 @@ import (
 	"io/fs"
 
 	"github.com/bon5co/godjango/database"
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
@@ -42,17 +43,21 @@ type permissionModel struct {
 	Identity      string `bun:"identity,unique,notnull"`
 }
 
-// BunStore is GoDjangGo's default PostgreSQL auth store.
+// BunStore is GoDjangGo's default Bun-backed auth store.
 type BunStore struct {
-	db  *bun.DB
-	idb bun.IDB
+	db      *bun.DB
+	idb     bun.IDB
+	dialect string
 }
 
 func NewBunStore(db *database.DB) *BunStore {
-	return &BunStore{db: db.Bun(), idb: db.Bun()}
+	return &BunStore{db: db.Bun(), idb: db.Bun(), dialect: db.Dialect()}
 }
 
 func (store *BunStore) InsertUser(ctx context.Context, user *User) error {
+	if store.dialect == "sqlite" && user.ID == "" {
+		user.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
 		Model(user).
 		Returning("id").
@@ -178,8 +183,12 @@ func (store *BunStore) CreateGroup(ctx context.Context, name string) error {
 	if name == "" {
 		return errors.New("godjango auth: group name is required")
 	}
+	model := &groupModel{Name: name}
+	if store.dialect == "sqlite" {
+		model.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
-		Model(&groupModel{Name: name}).
+		Model(model).
 		On("CONFLICT (name) DO NOTHING").
 		Exec(ctx)
 	return err
@@ -189,8 +198,12 @@ func (store *BunStore) CreatePermission(ctx context.Context, permission Permissi
 	if !validPermission(permission) {
 		return fmt.Errorf("godjango auth: invalid permission %q", permission)
 	}
+	model := &permissionModel{Identity: string(permission)}
+	if store.dialect == "sqlite" {
+		model.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
-		Model(&permissionModel{Identity: string(permission)}).
+		Model(model).
 		On("CONFLICT (identity) DO NOTHING").
 		Exec(ctx)
 	return err
@@ -284,7 +297,7 @@ func (store *BunStore) RunInTx(
 	fn func(context.Context, *BunStore) error,
 ) error {
 	return store.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return fn(ctx, &BunStore{db: store.db, idb: tx})
+		return fn(ctx, &BunStore{db: store.db, idb: tx, dialect: store.dialect})
 	})
 }
 

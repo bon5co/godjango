@@ -69,3 +69,18 @@ GODJANGO_TEST_DATABASE_URL=postgres://... \
 The regression suite terminates an actual pooled PostgreSQL backend, waits past
 pgxpool's built-in one-second liveness threshold, and verifies that the next
 query uses a healthy replacement connection.
+
+## SQLite
+
+For a local file, use `database.DefaultSQLiteConfig("sqlite:./db.sqlite")` or an
+absolute path such as `sqlite:///var/lib/example/app.sqlite`. The framework
+uses the pure Go `modernc.org/sqlite` driver with Bun's SQLite dialect. SQLite
+defaults to one connection for predictable local write serialization. The
+driver sets foreign key enforcement on each connection, including replacements
+after a connection expires. `DB.Dialect()` returns `sqlite` or `postgres`.
+
+`godjango startproject --db sqlite <name>` creates a project whose
+`DATABASE_URL` defaults to `sqlite:./db.sqlite`; PostgreSQL projects still
+require `DATABASE_URL`. Override the SQLite value with an environment variable
+when the file belongs elsewhere. `dbshell` opens `sqlite3` for a SQLite URL and
+`psql` for PostgreSQL.
