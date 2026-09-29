@@ -52,13 +52,19 @@ func ExecuteGlobal(ctx context.Context, args []string, options GlobalOptions, st
 		}
 	}
 	if args[0] == "startproject" {
-		if len(args) != 2 {
-			_, _ = fmt.Fprintln(streams.Err, "usage: godjango startproject <name>")
+		databaseName := "postgres"
+		if len(args) == 4 && args[1] == "--db" {
+			databaseName = args[2]
+			args = []string{args[0], args[3]}
+		}
+		if len(args) != 2 || (databaseName != "postgres" && databaseName != "sqlite") {
+			_, _ = fmt.Fprintln(streams.Err, "usage: godjango startproject [--db postgres|sqlite] <name>")
 			return ExitUsage
 		}
 		scaffolder := Scaffolder{
 			FrameworkVersion: options.Version,
 			FrameworkReplace: options.FrameworkReplace,
+			Database:         databaseName,
 		}
 		root, err := scaffolder.StartProject(ctx, workingDirectory, args[1])
 		if err != nil {
@@ -204,7 +210,7 @@ func (streams Streams) withDefaults() Streams {
 const globalHelp = `GoDjangGo management utility
 
 Usage:
-  godjango startproject <name>
+  godjango startproject [--db postgres|sqlite] <name>
   godjango <project-command> [arguments]
 
 Global commands:
@@ -221,7 +227,7 @@ Project commands:
   migrationstatus    Show migration status
   createsuperuser    Create an administrative user
   changepassword     Change a user's password
-  dbshell            Open a PostgreSQL shell
+  dbshell            Open the configured database shell
 
 Projects may explicitly register additional commands.
 `

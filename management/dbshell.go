@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 func RunDatabaseShell(
@@ -20,12 +21,21 @@ func RunDatabaseShell(
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	psql, err := exec.LookPath("psql")
-	if err != nil {
-		return fmt.Errorf("godjango dbshell: install PostgreSQL psql: %w", err)
+	program := "psql"
+	connection := dsn
+	if strings.HasPrefix(dsn, "sqlite:") {
+		program = "sqlite3"
+		connection = strings.TrimPrefix(dsn, "sqlite:")
+		if strings.HasPrefix(connection, "///") {
+			connection = connection[2:]
+		}
 	}
-	commandArgs := append([]string{dsn}, args...)
-	command := exec.Command(psql, commandArgs...)
+	tool, err := exec.LookPath(program)
+	if err != nil {
+		return fmt.Errorf("godjango dbshell: install %s: %w", program, err)
+	}
+	commandArgs := append([]string{connection}, args...)
+	command := exec.Command(tool, commandArgs...)
 	command.Env = os.Environ()
 	streams = streams.withDefaults()
 	command.Stdin = streams.In
@@ -39,11 +49,11 @@ func RunDatabaseShell(
 		return ctxErr
 	}
 	if code, forwarded := forwardedExitCode(err); forwarded {
-		return &ExitError{Code: code, Err: errors.New("psql interrupted")}
+		return &ExitError{Code: code, Err: fmt.Errorf("%s interrupted", program)}
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return &ExitError{Code: processExitCode(exitErr), Err: errors.New("psql failed")}
+		return &ExitError{Code: processExitCode(exitErr), Err: fmt.Errorf("%s failed", program)}
 	}
 	return err
 }

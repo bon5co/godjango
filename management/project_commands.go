@@ -398,8 +398,8 @@ func runServerCommand(ctx context.Context, services ProjectServices, streams Str
 
 func databaseShellCommand(ctx context.Context, services ProjectServices, streams Streams) *cobra.Command {
 	return &cobra.Command{
-		Use:                "dbshell [-- psql-arguments]",
-		Short:              "Open a PostgreSQL shell",
+		Use:                "dbshell [-- database-shell-arguments]",
+		Short:              "Open the configured database shell",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if services.DatabaseShell == nil {

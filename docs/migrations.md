@@ -85,3 +85,12 @@ GODJANGO_TEST_DATABASE_URL=postgres://... \
 
 The suite verifies ordering, apply/no-op behavior, row persistence, rollback,
 failed-transaction cleanup, pending status, and concurrent lock rejection.
+
+## Dialect-specific SQL
+
+`migrations.CollectForDialect(project, db.Dialect())` selects an app's
+`MigrationFSForDialect(string) fs.FS` when implemented; otherwise it uses
+`MigrationFS()`. The built-in auth app has separate PostgreSQL and SQLite SQL.
+App migrations that use portable SQL may keep only `MigrationFS()`. Dialect
+variants must keep the same timestamp identity and paired up/down files when
+an app is expected to migrate on both backends.

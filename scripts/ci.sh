@@ -27,9 +27,15 @@ case "$gate" in
     go mod verify
     ;;
   licenses)
+    # go-licenses does not classify mathutil's BSD-3-Clause text, even though
+    # its module contains a LICENSE. Check the exact notice separately.
+    go mod download modernc.org/mathutil
+    mathutil_dir="$(go list -m -f '{{.Dir}}' modernc.org/mathutil)"
+    cmp scripts/licenses/mathutil.LICENSE "$mathutil_dir/LICENSE"
     GOFLAGS="-tags=e2e" go run github.com/google/go-licenses@v1.6.0 \
       check ./... \
       --ignore github.com/bon5co/godjango \
+      --ignore modernc.org/mathutil \
       --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause
     ;;
   build)

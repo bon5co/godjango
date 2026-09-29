@@ -9,6 +9,7 @@ import (
 	"io/fs"
 
 	"github.com/bon5co/godjango/database"
+	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
 
@@ -16,7 +17,7 @@ type appConfig struct{}
 
 func (appConfig) Name() string { return "auth" }
 
-//go:embed migrations/*.sql
+//go:embed migrations/*.sql sqlite_migrations/*.sql
 var authMigrationFiles embed.FS
 
 func (appConfig) MigrationFS() fs.FS {
@@ -25,6 +26,17 @@ func (appConfig) MigrationFS() fs.FS {
 		panic(err)
 	}
 	return files
+}
+
+func (appConfig) MigrationFSForDialect(dialect string) fs.FS {
+	if dialect == "sqlite" {
+		files, err := fs.Sub(authMigrationFiles, "sqlite_migrations")
+		if err != nil {
+			panic(err)
+		}
+		return files
+	}
+	return App.MigrationFS()
 }
 
 // App registers default auth migrations with a project.
@@ -42,17 +54,21 @@ type permissionModel struct {
 	Identity      string `bun:"identity,unique,notnull"`
 }
 
-// BunStore is GoDjangGo's default PostgreSQL auth store.
+// BunStore is GoDjangGo's default Bun-backed auth store.
 type BunStore struct {
-	db  *bun.DB
-	idb bun.IDB
+	db      *bun.DB
+	idb     bun.IDB
+	dialect string
 }
 
 func NewBunStore(db *database.DB) *BunStore {
-	return &BunStore{db: db.Bun(), idb: db.Bun()}
+	return &BunStore{db: db.Bun(), idb: db.Bun(), dialect: db.Dialect()}
 }
 
 func (store *BunStore) InsertUser(ctx context.Context, user *User) error {
+	if store.dialect == "sqlite" && user.ID == "" {
+		user.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
 		Model(user).
 		Returning("id").
@@ -178,8 +194,12 @@ func (store *BunStore) CreateGroup(ctx context.Context, name string) error {
 	if name == "" {
 		return errors.New("godjango auth: group name is required")
 	}
+	model := &groupModel{Name: name}
+	if store.dialect == "sqlite" {
+		model.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
-		Model(&groupModel{Name: name}).
+		Model(model).
 		On("CONFLICT (name) DO NOTHING").
 		Exec(ctx)
 	return err
@@ -189,8 +209,12 @@ func (store *BunStore) CreatePermission(ctx context.Context, permission Permissi
 	if !validPermission(permission) {
 		return fmt.Errorf("godjango auth: invalid permission %q", permission)
 	}
+	model := &permissionModel{Identity: string(permission)}
+	if store.dialect == "sqlite" {
+		model.ID = uuid.NewString()
+	}
 	_, err := store.idb.NewInsert().
-		Model(&permissionModel{Identity: string(permission)}).
+		Model(model).
 		On("CONFLICT (identity) DO NOTHING").
 		Exec(ctx)
 	return err

@@ -36,12 +36,21 @@ type Provider interface {
 	MigrationFS() fs.FS
 }
 
+// DialectProvider may supply SQL specific to a database dialect.
+type DialectProvider interface {
+	MigrationFSForDialect(string) fs.FS
+}
+
 type Catalog struct {
 	migrations *bunmigrate.Migrations
 	names      []string
 }
 
 func Collect(configured *project.Project) (*Catalog, error) {
+	return CollectForDialect(configured, "postgres")
+}
+
+func CollectForDialect(configured *project.Project, dialect string) (*Catalog, error) {
 	if configured == nil {
 		return nil, fmt.Errorf("%w: project is nil", ErrInvalidCatalog)
 	}
@@ -60,6 +69,9 @@ func Collect(configured *project.Project) (*Catalog, error) {
 			continue
 		}
 		appFS := provider.MigrationFS()
+		if dialectProvider, ok := app.(DialectProvider); ok {
+			appFS = dialectProvider.MigrationFSForDialect(dialect)
+		}
 		if appFS == nil {
 			return nil, fmt.Errorf("%w: app %s returned a nil filesystem", ErrInvalidCatalog, app.Name())
 		}

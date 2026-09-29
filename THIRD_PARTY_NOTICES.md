@@ -1,5 +1,12 @@
 # Third-party notices
 
+## modernc.org/mathutil
+
+The SQLite driver depends on `modernc.org/mathutil` v1.7.1. Its license is
+BSD 3-Clause; a copy is at `scripts/licenses/mathutil.LICENSE`. The repository's
+license gate checks this text directly because `go-licenses` cannot classify
+the upstream file automatically.
+
 ## Django
 
 The behavioral contract tests under `auth/` are adapted from the Django test
